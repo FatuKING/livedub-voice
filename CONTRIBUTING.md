@@ -28,11 +28,11 @@ Everything in the project — code, comments, commits, issues and pull requests 
 
 Useful commands:
 
-| Command                           | What it does                     |
-| --------------------------------- | -------------------------------- |
-| `pnpm build`                      | Type-check and build the panel   |
-| `cargo build` (in `src-tauri/`)   | Build the Rust core              |
-| `cargo test` (in `src-tauri/`)    | Run the Rust tests               |
+| Command                         | What it does                   |
+| ------------------------------- | ------------------------------ |
+| `pnpm build`                    | Type-check and build the panel |
+| `cargo build` (in `src-tauri/`) | Build the Rust core            |
+| `cargo test` (in `src-tauri/`)  | Run the Rust tests             |
 
 To test translation end to end you need your own OpenAI API key and a virtual audio cable such as [VB-CABLE](https://vb-audio.com/Cable/). See the requirements in the [README](README.md#requirements).
 
@@ -72,11 +72,20 @@ If a change affects the project requirements or decisions described in [CLAUDE.m
 
 ## Code style
 
-- **Rust:** formatted with `rustfmt` and checked with `cargo clippy -D warnings`.
-- **TypeScript:** ESLint and Prettier.
+- **Rust:** formatted with `rustfmt` (`src-tauri/rustfmt.toml`) and linted with Clippy (lints in `src-tauri/Cargo.toml`, warnings are errors). Avoid `unwrap()`/`expect()` outside tests.
+- **TypeScript:** linted with ESLint (`eslint.config.js`) and formatted with Prettier (`.prettierrc`).
 - Line endings, indentation and charset are defined in [`.editorconfig`](.editorconfig) and [`.gitattributes`](.gitattributes); most editors pick them up automatically.
 
-> Lint and format tooling and scripts are coming soon. Until then, please run `cargo fmt` on Rust code and follow the style of the surrounding code.
+Run these from the repository root before opening a pull request:
+
+| Command          | What it does                                                                                  |
+| ---------------- | --------------------------------------------------------------------------------------------- |
+| `pnpm format`    | Formats everything (`prettier --write .` and `cargo fmt`).                                    |
+| `pnpm lint`      | Type-checks (`tsc`), runs ESLint, `prettier --check`, `cargo fmt --check` and `cargo clippy`. |
+| `pnpm test`      | Runs the panel tests (Vitest) and the Rust tests (`cargo test`).                              |
+| `pnpm typecheck` | Type-checks the panel only.                                                                   |
+
+All four must pass for a pull request to be merged. The recommended VS Code extensions are listed in [`.vscode/extensions.json`](.vscode/extensions.json).
 
 ## Reporting bugs
 
