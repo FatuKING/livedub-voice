@@ -43,6 +43,14 @@ pub enum AppError {
     #[error("audio device error: {0}")]
     Audio(String),
 
+    /// The outgoing translation has no output device (virtual cable) chosen.
+    #[error("no output device is chosen for the outgoing translation")]
+    NoOutputDevice,
+
+    /// A device chosen in the settings is not connected (or disabled).
+    #[error("device not found: {0}")]
+    DeviceMissing(String),
+
     /// An unexpected internal failure that the user cannot act on.
     #[error("internal error: {0}")]
     Internal(String),
@@ -59,6 +67,8 @@ impl AppError {
             Self::CredentialStore(_) => "credential_store",
             Self::Translator(error) => error.code(),
             Self::Audio(_) => "audio",
+            Self::NoOutputDevice => "no_output_device",
+            Self::DeviceMissing(_) => "device_missing",
             Self::Internal(_) => "internal",
         }
     }
@@ -136,6 +146,27 @@ mod tests {
         assert_eq!(
             serde_json::to_value(&error).unwrap(),
             json!({ "code": "audio", "message": "audio device error: could not list audio devices" })
+        );
+    }
+
+    #[test]
+    fn device_errors_serialize_with_code_and_message() {
+        assert_eq!(
+            serde_json::to_value(AppError::NoOutputDevice).unwrap(),
+            json!({
+                "code": "no_output_device",
+                "message": "no output device is chosen for the outgoing translation"
+            })
+        );
+        assert_eq!(
+            serde_json::to_value(AppError::DeviceMissing(
+                "the microphone is not connected".into()
+            ))
+            .unwrap(),
+            json!({
+                "code": "device_missing",
+                "message": "device not found: the microphone is not connected"
+            })
         );
     }
 

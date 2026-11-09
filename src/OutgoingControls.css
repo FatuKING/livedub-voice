@@ -1,0 +1,47 @@
+.ld-outgoing {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  width: 100%;
+}
+
+/* "Open settings" inside a note: reads as a link, behaves as a button. */
+.ld-outgoing__link {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--color-text);
+  font: inherit;
+  font-weight: var(--font-weight-semibold);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.ld-outgoing__captions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.ld-outgoing__captions-label {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+
+.ld-outgoing__caption {
+  min-height: 3lh;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  border-left: 3px solid var(--color-outgoing);
+  background: var(--color-outgoing-soft);
+  font-size: var(--font-size-md);
+  overflow-wrap: anywhere;
+}
+
+.ld-outgoing__caption-empty {
+  color: var(--color-text-muted);
+}

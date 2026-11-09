@@ -42,6 +42,28 @@ export const es: Messages = {
       eyebrow: "Saliente · tu voz",
       title: "Que los demás te escuchen en {language}",
       start: "Iniciar saliente",
+      stop: "Detener saliente",
+      level: "Micrófono",
+      captions: "Lo que escuchan los demás",
+      captionsEmpty: "Aquí aparece la traducción de tu voz.",
+      help: 'En Discord / WhatsApp Web, elegir "CABLE Output" como micrófono.',
+      notCable:
+        "La salida elegida en Configuración no es un cable virtual conocido. Los demás solo oyen la traducción si su app graba desde ella.",
+      blocked: {
+        noApiKey: "Para empezar, falta la API key de OpenAI en Configuración.",
+        noOutput:
+          "Para empezar, falta elegir el cable virtual (por ejemplo CABLE Input) como salida en Configuración.",
+        outputMissing:
+          "La salida elegida en Configuración no está conectada. Hay que instalar o conectar el cable virtual, o elegir otra salida.",
+      },
+      stopped: "La traducción saliente se detuvo: {error}",
+      goToSettings: "Ir a Configuración",
+    },
+    status: {
+      idle: "Apagado",
+      connecting: "Conectando…",
+      live: "En vivo",
+      error: "Error",
     },
     comingSoon: "Próximamente",
     comingSoonNote:
@@ -214,5 +236,9 @@ export const es: Messages = {
     openai_protocol: "Respuesta inesperada de OpenAI ({detail}).",
     openai_api: "OpenAI devolvió un error ({detail}).",
     translator_closed: "La sesión de traducción está cerrada.",
+    no_output_device:
+      "No hay ninguna salida elegida para la traducción saliente. El cable virtual se elige en Configuración.",
+    device_missing:
+      "Un dispositivo elegido en Configuración no está conectado ({detail}).",
   },
 };

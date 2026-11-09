@@ -45,6 +45,28 @@ export const en = {
       eyebrow: "Outgoing · you → others",
       title: "Others hear you in {language}",
       start: "Start outgoing",
+      stop: "Stop outgoing",
+      level: "Microphone",
+      captions: "What others hear",
+      captionsEmpty: "The translation of what you say shows up here.",
+      help: 'In Discord / WhatsApp Web choose "CABLE Output" as your microphone.',
+      notCable:
+        "The output in Settings is not a known virtual cable. Others only hear you if their app records from it.",
+      blocked: {
+        noApiKey: "Add your OpenAI API key in Settings to start.",
+        noOutput:
+          "Choose the virtual cable (for example CABLE Input) as the output in Settings to start.",
+        outputMissing:
+          "The output chosen in Settings is not connected. Install or plug in the virtual cable, or choose another output.",
+      },
+      stopped: "The outgoing translation stopped: {error}",
+      goToSettings: "Go to Settings",
+    },
+    status: {
+      idle: "Off",
+      connecting: "Connecting…",
+      live: "Live",
+      error: "Error",
     },
     comingSoon: "Coming soon",
     comingSoonNote:
@@ -217,5 +239,8 @@ export const en = {
     openai_protocol: "Unexpected answer from OpenAI ({detail}).",
     openai_api: "OpenAI returned an error ({detail}).",
     translator_closed: "The translation session is closed.",
+    no_output_device:
+      "No output is chosen for the outgoing translation. Choose the virtual cable in Settings.",
+    device_missing: "A device chosen in Settings is not connected ({detail}).",
   },
 } as const;
