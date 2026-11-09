@@ -2,6 +2,7 @@
 
 pub mod audio;
 pub mod commands;
+pub mod credentials;
 pub mod error;
 pub mod logging;
 pub mod pipeline;
@@ -33,12 +34,19 @@ pub fn run() {
             let store = settings::SettingsStore::load(settings_path);
             tracing::info!(path = %store.path().display(), "settings loaded");
             app.manage(store);
+
+            app.manage(credentials::Credentials::system());
+            app.manage(credentials::validation::KeyValidator::new()?);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             commands::app_info,
             commands::get_settings,
-            commands::save_settings
+            commands::save_settings,
+            commands::get_api_key_status,
+            commands::save_api_key,
+            commands::validate_api_key,
+            commands::delete_api_key
         ])
         .run(tauri::generate_context!());
 

@@ -106,6 +106,7 @@ Reusable primitives live in [`src/components/`](../src/components). Build new sc
 | `Perforation`   | Dashed tear line with notches, to split a card in two parts.                                   |
 | `Field`         | Label + control + hint wiring (ids, `aria-describedby`). Base of the inputs below.             |
 | `TextField`     | Single-line text input.                                                                        |
+| `SecretField`   | Password-style input with a show/hide toggle, for secrets such as the API key.                 |
 | `Select`        | Native `<select>` with Ruta styling (keeps native keyboard/screen-reader behavior).            |
 | `Slider`        | Range input with its formatted value next to the label; `direction` sets its color.            |
 | `Toggle`        | Switch (`role="switch"` checkbox); `direction` sets its "on" color.                            |

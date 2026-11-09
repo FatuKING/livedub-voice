@@ -1,3 +1,4 @@
+import ApiKeyCard from "../ApiKeyCard";
 import PageHeader from "../components/PageHeader";
 import SettingsForm from "../SettingsForm";
 
@@ -6,8 +7,9 @@ function SettingsScreen() {
     <>
       <PageHeader
         title="Settings"
-        description="Languages, devices and the app to translate, for each direction."
+        description="Your OpenAI API key, and the languages, devices and app to translate for each direction."
       />
+      <ApiKeyCard />
       <SettingsForm />
     </>
   );
