@@ -15,6 +15,10 @@ pub enum AppError {
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
 
+    /// The settings sent by the panel (or read from disk) are not valid.
+    #[error("invalid settings: {0}")]
+    InvalidSettings(String),
+
     /// An unexpected internal failure that the user cannot act on.
     #[error("internal error: {0}")]
     Internal(String),
@@ -25,6 +29,7 @@ impl AppError {
     pub fn code(&self) -> &'static str {
         match self {
             Self::Io(_) => "io",
+            Self::InvalidSettings(_) => "invalid_settings",
             Self::Internal(_) => "internal",
         }
     }
@@ -54,6 +59,16 @@ mod tests {
         assert_eq!(
             serde_json::to_value(&error).unwrap(),
             json!({ "code": "io", "message": "I/O error: missing" })
+        );
+    }
+
+    #[test]
+    fn invalid_settings_error_serializes_with_code_and_message() {
+        let error = AppError::InvalidSettings("bad volume".into());
+
+        assert_eq!(
+            serde_json::to_value(&error).unwrap(),
+            json!({ "code": "invalid_settings", "message": "invalid settings: bad volume" })
         );
     }
 

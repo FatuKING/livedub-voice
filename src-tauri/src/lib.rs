@@ -25,9 +25,21 @@ pub fn run() {
                 log_dir = %log_dir.display(),
                 "LiveDub Voice starting"
             );
+
+            let settings_path = app
+                .path()
+                .app_config_dir()?
+                .join(settings::SETTINGS_FILE_NAME);
+            let store = settings::SettingsStore::load(settings_path);
+            tracing::info!(path = %store.path().display(), "settings loaded");
+            app.manage(store);
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![commands::app_info])
+        .invoke_handler(tauri::generate_handler![
+            commands::app_info,
+            commands::get_settings,
+            commands::save_settings
+        ])
         .run(tauri::generate_context!());
 
     if let Err(error) = result {

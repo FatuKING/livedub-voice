@@ -59,7 +59,7 @@ Out of scope for v1: macOS/Linux, other languages, voice selection, other AI pro
 
 - **App shell:** Tauri 2.
 - **Core (audio + OpenAI client):** Rust — `tokio`, `tokio-tungstenite`, `wasapi` (WASAPI bindings), `rubato` (resampling), `keyring` (Credential Manager), `serde`/`serde_json` (settings and usage history). _Proposed crates; confirm when implementing._
-- **Persistence:** no database. Settings and usage history are plain JSON files in the app data folder (`%APPDATA%\LiveDub Voice`); the API key lives only in Credential Manager.
+- **Persistence:** no database. Settings and usage history are plain JSON files in Tauri's app config dir (`%APPDATA%\io.github.fatuking.livedubvoice`, e.g. `settings.json`); the API key lives only in Credential Manager.
 - **Panel (frontend):** React + TypeScript + Vite.
 - **Testing:** `cargo test` for the core, Vitest for the panel.
 - **CI/CD:** GitHub Actions on `windows-latest` (fmt, clippy, tests, build, release installer).
