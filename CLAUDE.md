@@ -65,7 +65,7 @@ Out of scope for v1: macOS/Linux, other languages, voice selection, other AI pro
 - **Core (audio + OpenAI client):** Rust — `tokio`, `tokio-tungstenite`, `wasapi` (WASAPI bindings), `rubato` (resampling), `keyring` 3 with the `windows-native` backend (Credential Manager), `reqwest` 0.12 with rustls and the Windows root store (`rustls-tls-native-roots`, no OpenSSL) as the HTTP client, `serde`/`serde_json` (settings and usage history). _Crates not yet in `Cargo.toml` are proposals; confirm when implementing._
 - **Persistence:** no database. Settings and usage history are plain JSON files in Tauri's app config dir (`%APPDATA%\io.github.fatuking.livedubvoice`, e.g. `settings.json`); the API key lives only in Credential Manager.
 - **Panel (frontend):** React + TypeScript + Vite. Plain CSS with design tokens (no UI framework, Tailwind or CSS-in-JS); Plus Jakarta Sans bundled via `@fontsource-variable`, icons from `lucide-react`. Nothing loaded from a CDN.
-- **Testing:** `cargo test` for the core, Vitest for the panel.
+- **Testing:** `cargo test` for the core, Vitest for the panel. `LIVEDUB_FAKE_TRANSLATOR=1` (replay) or `=echo` swaps OpenAI for a free local fake translator.
 - **CI/CD:** GitHub Actions on `windows-latest` (fmt, clippy, tests, build, release installer).
 
 ## Architecture
