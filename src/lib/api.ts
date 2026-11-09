@@ -153,3 +153,31 @@ export function validateApiKey(): Promise<KeyValidation> {
 export function deleteApiKey(): Promise<ApiKeyStatus> {
   return invoke<ApiKeyStatus>("delete_api_key");
 }
+
+/**
+ * An active audio endpoint.
+ *
+ * Mirrors `AudioDevice` in `src-tauri/src/audio/devices.rs`.
+ */
+export interface AudioDevice {
+  /** Stable endpoint id; this is what settings store. */
+  id: string;
+  /** Friendly name, e.g. "Speakers (Realtek(R) Audio)". */
+  name: string;
+  /** `input` records (microphones, cable outputs); `output` plays (speakers, cable inputs). */
+  kind: "input" | "output";
+  /** Whether this is the system default device of its kind. */
+  isDefault: boolean;
+  /** Whether the name matches a known virtual audio cable (VB-CABLE, VoiceMeeter, …). */
+  isVirtualCable: boolean;
+}
+
+/**
+ * Lists the active audio input and output devices: inputs first, then outputs; the default
+ * device of each kind first, then by name.
+ *
+ * Rejects with an {@link AppError} (code `"audio"`) when Windows cannot list them.
+ */
+export function listAudioDevices(): Promise<AudioDevice[]> {
+  return invoke<AudioDevice[]>("list_audio_devices");
+}
