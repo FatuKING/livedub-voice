@@ -15,11 +15,15 @@ describe("App", () => {
   });
 
   it("renders the product name and the version from app_info", async () => {
-    invokeMock.mockResolvedValue({
-      name: "LiveDub Voice",
-      version: "1.2.3",
-      profile: "debug",
-    });
+    invokeMock.mockImplementation((command) =>
+      command === "app_info"
+        ? Promise.resolve({
+            name: "LiveDub Voice",
+            version: "1.2.3",
+            profile: "debug",
+          })
+        : new Promise(() => {}),
+    );
 
     render(<App />);
 
@@ -31,10 +35,18 @@ describe("App", () => {
   });
 
   it("shows the error message when app_info fails", async () => {
-    invokeMock.mockRejectedValue({ code: "internal", message: "boom" });
+    invokeMock.mockImplementation((command) =>
+      command === "app_info"
+        ? // Tauri rejects failing commands with a plain `{ code, message }` object.
+          // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors
+          Promise.reject({ code: "internal", message: "boom" })
+        : new Promise(() => {}),
+    );
 
     render(<App />);
 
-    expect(await screen.findByRole("alert")).toHaveTextContent("boom");
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Could not read app info: boom",
+    );
   });
 });

@@ -4,6 +4,10 @@
 //! [`AppResult`](crate::error::AppResult), so errors reach the panel as `{ code, message }`.
 
 use serde::Serialize;
+use tauri::State;
+
+use crate::error::AppResult;
+use crate::settings::{Settings, SettingsStore};
 
 /// Product name shown to the user.
 pub const APP_NAME: &str = "LiveDub Voice";
@@ -37,6 +41,18 @@ impl AppInfo {
 #[tauri::command]
 pub fn app_info() -> AppInfo {
     AppInfo::current()
+}
+
+/// Returns the current settings.
+#[tauri::command]
+pub fn get_settings(store: State<'_, SettingsStore>) -> AppResult<Settings> {
+    store.get()
+}
+
+/// Validates and saves the settings, returning what was saved.
+#[tauri::command]
+pub fn save_settings(store: State<'_, SettingsStore>, settings: Settings) -> AppResult<Settings> {
+    store.save(settings)
 }
 
 #[cfg(test)]

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import SettingsForm from "./SettingsForm";
 import { getAppInfo, isAppError, type AppInfo } from "./lib/api";
 
 function App() {
@@ -19,6 +20,7 @@ function App() {
       {info && <p>Version {info.version}</p>}
       {error && <p role="alert">Could not read app info: {error}</p>}
       <p>LiveDub Voice is in early development.</p>
+      <SettingsForm />
     </main>
   );
 }
