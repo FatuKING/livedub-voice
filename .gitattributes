@@ -1,0 +1,7 @@
+# Normalize line endings: store and check out text files with LF.
+* text=auto eol=lf
+
+# Binary assets
+*.ico binary
+*.png binary
+*.icns binary
