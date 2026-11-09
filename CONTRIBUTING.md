@@ -73,6 +73,7 @@ fix(panel): keep the API key field masked after validation
 - Use a Conventional Commits title for the PR (for example `fix: handle device disconnects`).
 - In the description, explain **what** changed and **why**, link the related issue if there is one, and describe **how you tested it** (commands you ran, what you checked manually in the app).
 - Make sure `pnpm build` and `cargo build` pass before asking for review.
+- Pull requests must pass the `CI / checks` workflow (GitHub Actions on Windows: lint, tests and build) before they can be merged.
 - PRs are merged by the maintainer using **squash merge** after review (it is the only merge method enabled), so the PR title becomes the commit message on `main`. The branch is deleted automatically after merging.
 
 If a change affects the project requirements or decisions described in [CLAUDE.md](CLAUDE.md), update that file in the same PR.
