@@ -34,6 +34,22 @@ Useful commands:
 | `cargo build` (in `src-tauri/`) | Build the Rust core            |
 | `cargo test` (in `src-tauri/`)  | Run the Rust tests             |
 
+### Running without an OpenAI key
+
+Set `LIVEDUB_FAKE_TRANSLATOR` before starting the app to replace OpenAI with a local fake translator that costs nothing:
+
+| Value           | What the fake does                                                                       |
+| --------------- | ---------------------------------------------------------------------------------------- |
+| `1` or `replay` | Replays a recorded Spanish → English session (captions and short audio deltas) in a loop |
+| `echo`          | Plays your own input back as the "translation" after 1.5 s                               |
+| `echo:<ms>`     | Same, with another delay (for example `echo:500`)                                        |
+
+```bash
+LIVEDUB_FAKE_TRANSLATOR=echo pnpm tauri dev
+```
+
+In PowerShell: `$env:LIVEDUB_FAKE_TRANSLATOR = "echo"; pnpm tauri dev`. The recorded session lives in `src-tauri/src/translator/fixtures/fake_session.jsonl`.
+
 To test translation end to end you need your own OpenAI API key and a virtual audio cable such as [VB-CABLE](https://vb-audio.com/Cable/). See the requirements in the [README](README.md#requirements).
 
 ## Branches

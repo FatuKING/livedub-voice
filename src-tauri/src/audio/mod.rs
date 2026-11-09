@@ -10,7 +10,9 @@
 //! - resampling to and from the 24 kHz mono PCM16 format the translator expects.
 
 pub mod devices;
+pub mod resample;
 pub mod virtual_cable;
 
 pub use devices::{AudioDevice, DeviceKind, list_devices};
+pub use resample::{FromTranslator, ToTranslator};
 pub use virtual_cable::{KNOWN_VIRTUAL_CABLES, VirtualCable, detect_virtual_cable};
