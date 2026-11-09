@@ -4,6 +4,7 @@ import Button from "./components/Button";
 import Card from "./components/Card";
 import LanguageRoute from "./components/LanguageRoute";
 import Notice from "./components/Notice";
+import Perforation from "./components/Perforation";
 import Select from "./components/Select";
 import Slider from "./components/Slider";
 import TextField from "./components/TextField";
@@ -16,6 +17,7 @@ import {
   type AudioDevice,
   type Settings,
 } from "./lib/api";
+import MicTest from "./MicTest";
 import {
   SYSTEM_DEFAULT_VALUE,
   deviceIdFromValue,
@@ -251,6 +253,11 @@ function SettingsForm() {
             onChange={(value) =>
               updateOutgoing({ outputDeviceId: deviceIdFromValue(value) })
             }
+          />
+          <Perforation />
+          <MicTest
+            inputId={outgoing.inputDeviceId}
+            outputId={incoming.outputDeviceId}
           />
         </Card>
       </div>

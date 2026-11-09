@@ -111,6 +111,7 @@ Reusable primitives live in [`src/components/`](../src/components). Build new sc
 | `Slider`        | Range input with its formatted value next to the label; `direction` sets its color.            |
 | `Toggle`        | Switch (`role="switch"` checkbox); `direction` sets its "on" color.                            |
 | `LanguageRoute` | The route motif: `from`, `to`, `direction`, `size`. Announced as "English to Spanish".         |
+| `LevelMeter`    | VU bar on a dB scale (−60 to 0 dBFS) with a peak tick (sun near clipping); `role="meter"`.     |
 | `StatusPill`    | Small state label with a dot. Tones `neutral`, `incoming`, `outgoing`, `sun`, `danger`.        |
 | `Notice`        | Inline message: `info`, `success`, `warning`, `error` (errors use `role="alert"`).             |
 | `PageHeader`    | Screen title and description; the title receives focus after navigation.                       |

@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
 /**
  * Error returned by a failing Tauri command.
@@ -180,4 +181,50 @@ export interface AudioDevice {
  */
 export function listAudioDevices(): Promise<AudioDevice[]> {
   return invoke<AudioDevice[]>("list_audio_devices");
+}
+
+/**
+ * Input level of the microphone test: linear amplitude, 0 (silence) to 1 (full scale).
+ *
+ * Mirrors `InputLevel` in `src-tauri/src/audio/level.rs`.
+ */
+export interface InputLevel {
+  rms: number;
+  peak: number;
+}
+
+/**
+ * Starts the microphone test on `inputId` (`null` = system default), replacing a running one.
+ *
+ * With `listen`, also plays the microphone on `outputId` (`null` = default). Rejects with an
+ * {@link AppError} (code `"audio"`) when a device cannot be opened, or when the two devices use
+ * different sample rates or channel counts ("formats differ, needs resampling").
+ */
+export function startMonitor(
+  inputId: string | null,
+  outputId: string | null,
+  listen: boolean,
+): Promise<void> {
+  return invoke<void>("start_monitor", { inputId, outputId, listen });
+}
+
+/** Stops the microphone test, if one is running. */
+export function stopMonitor(): Promise<void> {
+  return invoke<void>("stop_monitor");
+}
+
+/** Calls `handler` with the microphone test's level, ~20 times per second. */
+export function onMonitorLevel(
+  handler: (level: InputLevel) => void,
+): Promise<UnlistenFn> {
+  return listen<InputLevel>("monitor-level", (event) => handler(event.payload));
+}
+
+/** Calls `handler` when the microphone test stops on its own (for example a device was unplugged). */
+export function onMonitorStopped(
+  handler: (message: string) => void,
+): Promise<UnlistenFn> {
+  return listen<{ message: string }>("monitor-stopped", (event) =>
+    handler(event.payload.message),
+  );
 }

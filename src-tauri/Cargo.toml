@@ -35,6 +35,7 @@ tokio-tungstenite = { version = "0.30", default-features = false, features = ["c
 tokio = { version = "1", features = ["rt", "macros", "sync", "time", "net"] }
 futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
 base64 = "0.22"
+rtrb = "0.4.1"
 
 [dev-dependencies]
 hound = "3.5"

@@ -1,0 +1,54 @@
+.ld-meter {
+  --meter-fill: var(--color-text);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.ld-meter--incoming {
+  --meter-fill: var(--color-incoming);
+}
+
+.ld-meter--outgoing {
+  --meter-fill: var(--color-outgoing);
+}
+
+.ld-meter__label {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+}
+
+.ld-meter__track {
+  position: relative;
+  height: 10px;
+  overflow: hidden;
+  border-radius: var(--radius-pill);
+  background: var(--color-surface-raised);
+  border: var(--border-hairline);
+}
+
+/* Updated ~20 times per second: a short transition smooths the steps without lagging. */
+.ld-meter__fill {
+  height: 100%;
+  background: var(--meter-fill);
+  transition: width 60ms linear;
+}
+
+.ld-meter__peak {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  margin-left: -2px;
+  background: var(--color-text);
+}
+
+.ld-meter__peak--hot {
+  background: var(--color-sun);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ld-meter__fill {
+    transition: none;
+  }
+}
