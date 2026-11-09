@@ -1,5 +1,5 @@
-import { Save } from "lucide-react";
-import { useEffect, useState, type FormEvent } from "react";
+import { RefreshCw, Save } from "lucide-react";
+import { useCallback, useEffect, useState, type FormEvent } from "react";
 import Button from "./components/Button";
 import Card from "./components/Card";
 import LanguageRoute from "./components/LanguageRoute";
@@ -11,9 +11,17 @@ import Toggle from "./components/Toggle";
 import {
   getSettings,
   isAppError,
+  listAudioDevices,
   saveSettings,
+  type AudioDevice,
   type Settings,
 } from "./lib/api";
+import {
+  SYSTEM_DEFAULT_VALUE,
+  deviceIdFromValue,
+  deviceOptions,
+  hasVirtualCable,
+} from "./lib/devices";
 import { LANGUAGE_OPTIONS, sourceLanguageFor } from "./lib/languages";
 import "./SettingsForm.css";
 
@@ -21,21 +29,45 @@ function errorMessage(reason: unknown): string {
   return isAppError(reason) ? reason.message : String(reason);
 }
 
-/** Empty text field → `null` (default device). */
-function optionalText(value: string): string | null {
-  return value === "" ? null : value;
-}
-
 /**
  * Settings form: languages, ducking, enabled toggles, devices and source app, grouped per direction.
  *
- * Devices and the source app are plain text fields until real device/process listing exists.
+ * Devices are picked from the list the core reports (refreshable); the source app is a plain text
+ * field until process listing exists.
  */
 function SettingsForm() {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [devices, setDevices] = useState<AudioDevice[] | null>(null);
+  const [devicesError, setDevicesError] = useState<string | null>(null);
+  const [loadingDevices, setLoadingDevices] = useState(false);
+
+  const fetchDevices = useCallback(
+    () =>
+      listAudioDevices().then(
+        (list) => {
+          setDevices(list);
+          setDevicesError(null);
+        },
+        (reason: unknown) => {
+          setDevicesError(
+            `Could not list audio devices: ${errorMessage(reason)}`,
+          );
+        },
+      ),
+    [],
+  );
+
+  useEffect(() => {
+    void fetchDevices();
+  }, [fetchDevices]);
+
+  function refreshDevices() {
+    setLoadingDevices(true);
+    void fetchDevices().finally(() => setLoadingDevices(false));
+  }
 
   useEffect(() => {
     getSettings()
@@ -89,6 +121,8 @@ function SettingsForm() {
     }
   }
 
+  const missingCable = devices !== null && !hasVirtualCable(devices, "output");
+
   const sourceProcess =
     incoming.sourceApp.kind === "process" ? incoming.sourceApp.name : "";
 
@@ -139,14 +173,17 @@ function SettingsForm() {
               });
             }}
           />
-          <TextField
-            label="Headphones device id"
-            hint="Leave empty to use the default playback device."
-            value={incoming.outputDeviceId ?? ""}
-            onChange={(event) =>
-              updateIncoming({
-                outputDeviceId: optionalText(event.target.value),
-              })
+          <Select
+            label="Headphones"
+            hint="Where you hear the translation."
+            value={incoming.outputDeviceId ?? SYSTEM_DEFAULT_VALUE}
+            options={deviceOptions({
+              devices,
+              kind: "output",
+              savedId: incoming.outputDeviceId,
+            })}
+            onChange={(value) =>
+              updateIncoming({ outputDeviceId: deviceIdFromValue(value) })
             }
           />
           <Slider
@@ -185,24 +222,34 @@ function SettingsForm() {
             options={LANGUAGE_OPTIONS}
             onChange={(targetLanguage) => updateOutgoing({ targetLanguage })}
           />
-          <TextField
-            label="Microphone device id"
-            hint="Leave empty to use the default microphone."
-            value={outgoing.inputDeviceId ?? ""}
-            onChange={(event) =>
-              updateOutgoing({
-                inputDeviceId: optionalText(event.target.value),
-              })
+          <Select
+            label="Microphone"
+            value={outgoing.inputDeviceId ?? SYSTEM_DEFAULT_VALUE}
+            options={deviceOptions({
+              devices,
+              kind: "input",
+              savedId: outgoing.inputDeviceId,
+            })}
+            onChange={(value) =>
+              updateOutgoing({ inputDeviceId: deviceIdFromValue(value) })
             }
           />
-          <TextField
-            label="Virtual cable device id"
-            hint="Playback side of a virtual cable (e.g. VB-CABLE). Pick its recording side as the mic in your call or game."
-            value={outgoing.outputDeviceId ?? ""}
-            onChange={(event) =>
-              updateOutgoing({
-                outputDeviceId: optionalText(event.target.value),
-              })
+          <Select
+            label="Virtual cable"
+            hint={
+              missingCable
+                ? "No virtual cable found. Install a virtual cable such as VB-CABLE, then refresh the devices."
+                : "Playback side of a virtual cable (e.g. CABLE Input). Pick its recording side as the mic in your call or game."
+            }
+            value={outgoing.outputDeviceId ?? SYSTEM_DEFAULT_VALUE}
+            options={deviceOptions({
+              devices,
+              kind: "output",
+              savedId: outgoing.outputDeviceId,
+              cablesFirst: true,
+            })}
+            onChange={(value) =>
+              updateOutgoing({ outputDeviceId: deviceIdFromValue(value) })
             }
           />
         </Card>
@@ -216,6 +263,15 @@ function SettingsForm() {
         >
           {saving ? "Saving…" : "Save"}
         </Button>
+        <Button
+          variant="secondary"
+          disabled={loadingDevices}
+          icon={<RefreshCw size={16} aria-hidden="true" />}
+          onClick={refreshDevices}
+        >
+          {loadingDevices ? "Refreshing…" : "Refresh devices"}
+        </Button>
+        {devicesError && <Notice tone="error">{devicesError}</Notice>}
         {status && <Notice tone="success">{status}</Notice>}
         {error && <Notice tone="error">{error}</Notice>}
       </div>

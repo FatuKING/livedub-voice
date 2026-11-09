@@ -6,6 +6,7 @@
 use serde::Serialize;
 use tauri::State;
 
+use crate::audio::{self, AudioDevice};
 use crate::credentials::validation::{KeyValidation, KeyValidator};
 use crate::credentials::{ApiKeyStatus, Credentials};
 use crate::error::{AppError, AppResult};
@@ -102,6 +103,17 @@ pub async fn validate_api_key(
 pub fn delete_api_key(credentials: State<'_, Credentials>) -> AppResult<ApiKeyStatus> {
     credentials.delete()?;
     credentials.status()
+}
+
+/// Lists the active audio input and output devices.
+///
+/// Enumeration is blocking COM work, so it runs on a blocking thread (which initializes COM for
+/// itself) instead of the async runtime.
+#[tauri::command]
+pub async fn list_audio_devices() -> AppResult<Vec<AudioDevice>> {
+    tauri::async_runtime::spawn_blocking(audio::list_devices)
+        .await
+        .map_err(|error| AppError::Internal(format!("device listing task failed: {error}")))?
 }
 
 #[cfg(test)]

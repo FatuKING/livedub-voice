@@ -39,6 +39,10 @@ pub enum AppError {
     #[error(transparent)]
     Translator(#[from] TranslatorError),
 
+    /// Windows audio (WASAPI) failed, for example while listing devices.
+    #[error("audio device error: {0}")]
+    Audio(String),
+
     /// An unexpected internal failure that the user cannot act on.
     #[error("internal error: {0}")]
     Internal(String),
@@ -54,6 +58,7 @@ impl AppError {
             Self::NoApiKey => "no_api_key",
             Self::CredentialStore(_) => "credential_store",
             Self::Translator(error) => error.code(),
+            Self::Audio(_) => "audio",
             Self::Internal(_) => "internal",
         }
     }
@@ -121,6 +126,16 @@ mod tests {
         assert_eq!(
             serde_json::to_value(AppError::from(TranslatorError::RateLimited)).unwrap()["code"],
             json!("openai_rate_limited")
+        );
+    }
+
+    #[test]
+    fn audio_error_serializes_with_code_and_message() {
+        let error = AppError::Audio("could not list audio devices".into());
+
+        assert_eq!(
+            serde_json::to_value(&error).unwrap(),
+            json!({ "code": "audio", "message": "audio device error: could not list audio devices" })
         );
     }
 
