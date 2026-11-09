@@ -37,3 +37,7 @@ TASK.md
 # Local audio test captures (WAV fixtures elsewhere stay tracked)
 recordings/**/*.wav
 tmp/**/*.wav
+
+# Claude Code local state (session worktrees, personal settings)
+.claude/worktrees/
+.claude/settings.local.json
