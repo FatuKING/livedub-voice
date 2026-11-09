@@ -25,3 +25,15 @@ dist-ssr
 
 # Fichero local de tareas (no se publica)
 TASK.md
+
+# Rust build output (safety net; src-tauri/.gitignore also covers it)
+/target/
+
+# Secrets and local environment files
+.env
+.env.*
+*.pem
+
+# Local audio test captures (WAV fixtures elsewhere stay tracked)
+recordings/**/*.wav
+tmp/**/*.wav
