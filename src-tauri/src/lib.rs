@@ -37,6 +37,7 @@ pub fn run() {
 
             app.manage(credentials::Credentials::system());
             app.manage(credentials::validation::KeyValidator::new()?);
+            app.manage(commands::MonitorState::default());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -47,7 +48,9 @@ pub fn run() {
             commands::save_api_key,
             commands::validate_api_key,
             commands::delete_api_key,
-            commands::list_audio_devices
+            commands::list_audio_devices,
+            commands::start_monitor,
+            commands::stop_monitor
         ])
         .run(tauri::generate_context!());
 
