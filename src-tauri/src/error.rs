@@ -19,6 +19,19 @@ pub enum AppError {
     #[error("invalid settings: {0}")]
     InvalidSettings(String),
 
+    /// The API key typed by the user does not look like an OpenAI key. The message never
+    /// includes the key.
+    #[error("invalid API key: {0}")]
+    InvalidApiKey(String),
+
+    /// An action needs the OpenAI API key and none is stored.
+    #[error("no OpenAI API key is set")]
+    NoApiKey,
+
+    /// Windows Credential Manager could not read, store or delete the API key.
+    #[error("credential store error: {0}")]
+    CredentialStore(String),
+
     /// An unexpected internal failure that the user cannot act on.
     #[error("internal error: {0}")]
     Internal(String),
@@ -30,6 +43,9 @@ impl AppError {
         match self {
             Self::Io(_) => "io",
             Self::InvalidSettings(_) => "invalid_settings",
+            Self::InvalidApiKey(_) => "invalid_api_key",
+            Self::NoApiKey => "no_api_key",
+            Self::CredentialStore(_) => "credential_store",
             Self::Internal(_) => "internal",
         }
     }
@@ -69,6 +85,22 @@ mod tests {
         assert_eq!(
             serde_json::to_value(&error).unwrap(),
             json!({ "code": "invalid_settings", "message": "invalid settings: bad volume" })
+        );
+    }
+
+    #[test]
+    fn api_key_errors_serialize_with_code_and_message() {
+        assert_eq!(
+            serde_json::to_value(AppError::NoApiKey).unwrap(),
+            json!({ "code": "no_api_key", "message": "no OpenAI API key is set" })
+        );
+        assert_eq!(
+            serde_json::to_value(AppError::InvalidApiKey("bad prefix".into())).unwrap(),
+            json!({ "code": "invalid_api_key", "message": "invalid API key: bad prefix" })
+        );
+        assert_eq!(
+            serde_json::to_value(AppError::CredentialStore("denied".into())).unwrap(),
+            json!({ "code": "credential_store", "message": "credential store error: denied" })
         );
     }
 

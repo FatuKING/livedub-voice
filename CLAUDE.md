@@ -36,7 +36,7 @@ Out of scope for v1: macOS/Linux, other languages, voice selection, other AI pro
 ### Non-functional
 
 - Low latency: the audio pipeline must not add noticeable delay on top of the model (~1–2 s expected end to end).
-- The API key is stored in Windows Credential Manager, never in plain text or logs.
+- The API key is stored in Windows Credential Manager, never in plain text or logs. The panel never reads it back: it only gets whether a key is set and its last four characters. The key is checked with a free `GET /v1/models/gpt-realtime-translate` (no tokens spent), so a key on an account without credits still passes until audio is streamed.
 - No telemetry. Audio goes only to OpenAI.
 - No game process injection (must be safe with anti-cheat systems).
 - Low CPU/RAM footprint while gaming.
@@ -58,7 +58,7 @@ Out of scope for v1: macOS/Linux, other languages, voice selection, other AI pro
 ## Tech stack
 
 - **App shell:** Tauri 2.
-- **Core (audio + OpenAI client):** Rust — `tokio`, `tokio-tungstenite`, `wasapi` (WASAPI bindings), `rubato` (resampling), `keyring` (Credential Manager), `serde`/`serde_json` (settings and usage history). _Proposed crates; confirm when implementing._
+- **Core (audio + OpenAI client):** Rust — `tokio`, `tokio-tungstenite`, `wasapi` (WASAPI bindings), `rubato` (resampling), `keyring` 3 with the `windows-native` backend (Credential Manager), `reqwest` 0.12 with rustls and the Windows root store (`rustls-tls-native-roots`, no OpenSSL) as the HTTP client, `serde`/`serde_json` (settings and usage history). _Crates not yet in `Cargo.toml` are proposals; confirm when implementing._
 - **Persistence:** no database. Settings and usage history are plain JSON files in Tauri's app config dir (`%APPDATA%\io.github.fatuking.livedubvoice`, e.g. `settings.json`); the API key lives only in Credential Manager.
 - **Panel (frontend):** React + TypeScript + Vite. Plain CSS with design tokens (no UI framework, Tailwind or CSS-in-JS); Plus Jakarta Sans bundled via `@fontsource-variable`, icons from `lucide-react`. Nothing loaded from a CDN.
 - **Testing:** `cargo test` for the core, Vitest for the panel.

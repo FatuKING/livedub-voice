@@ -6,7 +6,9 @@
 use serde::Serialize;
 use tauri::State;
 
-use crate::error::AppResult;
+use crate::credentials::validation::{KeyValidation, KeyValidator};
+use crate::credentials::{ApiKeyStatus, Credentials};
+use crate::error::{AppError, AppResult};
 use crate::settings::{Settings, SettingsStore};
 
 /// Product name shown to the user.
@@ -53,6 +55,53 @@ pub fn get_settings(store: State<'_, SettingsStore>) -> AppResult<Settings> {
 #[tauri::command]
 pub fn save_settings(store: State<'_, SettingsStore>, settings: Settings) -> AppResult<Settings> {
     store.save(settings)
+}
+
+/// Result of `save_api_key`: the key is stored even when the check could not reach OpenAI.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveApiKeyResult {
+    pub status: ApiKeyStatus,
+    pub validation: KeyValidation,
+}
+
+/// Whether an OpenAI API key is stored, and its last four characters. Never returns the key.
+#[tauri::command]
+pub fn get_api_key_status(credentials: State<'_, Credentials>) -> AppResult<ApiKeyStatus> {
+    credentials.status()
+}
+
+/// Trims, format-checks and stores the key in Windows Credential Manager, then checks it against
+/// OpenAI. The key stays stored whatever the check says (for example when offline).
+#[tauri::command]
+pub async fn save_api_key(
+    credentials: State<'_, Credentials>,
+    validator: State<'_, KeyValidator>,
+    key: String,
+) -> AppResult<SaveApiKeyResult> {
+    let key = credentials.save(&key)?;
+    let validation = validator.validate(&key).await;
+    Ok(SaveApiKeyResult {
+        status: credentials.status()?,
+        validation,
+    })
+}
+
+/// Checks the stored key against OpenAI again.
+#[tauri::command]
+pub async fn validate_api_key(
+    credentials: State<'_, Credentials>,
+    validator: State<'_, KeyValidator>,
+) -> AppResult<KeyValidation> {
+    let key = credentials.load()?.ok_or(AppError::NoApiKey)?;
+    Ok(validator.validate(&key).await)
+}
+
+/// Deletes the stored key.
+#[tauri::command]
+pub fn delete_api_key(credentials: State<'_, Credentials>) -> AppResult<ApiKeyStatus> {
+    credentials.delete()?;
+    credentials.status()
 }
 
 #[cfg(test)]

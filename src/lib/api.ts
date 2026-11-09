@@ -92,3 +92,64 @@ export function getSettings(): Promise<Settings> {
 export function saveSettings(settings: Settings): Promise<Settings> {
   return invoke<Settings>("save_settings", { settings });
 }
+
+/**
+ * What the panel may know about the stored OpenAI API key. The key itself never comes back.
+ *
+ * Mirrors `ApiKeyStatus` in `src-tauri/src/credentials/mod.rs`.
+ */
+export interface ApiKeyStatus {
+  hasKey: boolean;
+  /** Last four characters of the stored key; `null` when no key is set. */
+  last4: string | null;
+}
+
+/**
+ * Result of checking a key against OpenAI.
+ *
+ * Mirrors `KeyValidation` in `src-tauri/src/credentials/validation.rs`.
+ */
+export type KeyValidation =
+  /** The key works and can use the model. */
+  | { kind: "valid" }
+  /** OpenAI rejected the key (HTTP 401). */
+  | { kind: "invalidKey" }
+  /** The key is valid but the account cannot use the model (HTTP 403/404). */
+  | { kind: "noModelAccess" }
+  /** Too many requests (HTTP 429). */
+  | { kind: "rateLimited" }
+  /** OpenAI could not be reached (no network or timeout). */
+  | { kind: "offline" }
+  /** Any other answer; `status` is the HTTP status when a response arrived. */
+  | { kind: "unexpected"; status: number | null };
+
+/** Result of {@link saveApiKey}: the key is stored even when the check failed. */
+export interface SaveApiKeyResult {
+  status: ApiKeyStatus;
+  validation: KeyValidation;
+}
+
+/** Whether an API key is stored, and its last four characters. */
+export function getApiKeyStatus(): Promise<ApiKeyStatus> {
+  return invoke<ApiKeyStatus>("get_api_key_status");
+}
+
+/**
+ * Stores the key in Windows Credential Manager and checks it against OpenAI.
+ *
+ * Rejects with an {@link AppError} (code `"invalid_api_key"`) when the key does not look like an
+ * OpenAI key, or `"credential_store"` when it cannot be stored.
+ */
+export function saveApiKey(key: string): Promise<SaveApiKeyResult> {
+  return invoke<SaveApiKeyResult>("save_api_key", { key });
+}
+
+/** Checks the stored key against OpenAI again. Rejects with code `"no_api_key"` if none is set. */
+export function validateApiKey(): Promise<KeyValidation> {
+  return invoke<KeyValidation>("validate_api_key");
+}
+
+/** Deletes the stored key, resolving with the new (empty) status. */
+export function deleteApiKey(): Promise<ApiKeyStatus> {
+  return invoke<ApiKeyStatus>("delete_api_key");
+}
