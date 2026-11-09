@@ -46,7 +46,8 @@ pub fn run() {
             commands::get_api_key_status,
             commands::save_api_key,
             commands::validate_api_key,
-            commands::delete_api_key
+            commands::delete_api_key,
+            commands::list_audio_devices
         ])
         .run(tauri::generate_context!());
 
