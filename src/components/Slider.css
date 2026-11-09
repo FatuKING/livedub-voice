@@ -1,0 +1,25 @@
+/* Native range input, tinted with `accent-color` (no custom track rendering to keep it light). */
+.ld-slider {
+  width: 100%;
+  height: 24px;
+  margin: 0;
+  accent-color: var(--color-text);
+  cursor: pointer;
+}
+
+.ld-slider--incoming {
+  accent-color: var(--color-incoming);
+}
+
+.ld-slider--outgoing {
+  accent-color: var(--color-outgoing);
+}
+
+.ld-slider:focus-visible {
+  border-radius: var(--radius-sm);
+}
+
+.ld-slider__value {
+  font-size: var(--font-size-sm);
+  color: var(--color-text);
+}

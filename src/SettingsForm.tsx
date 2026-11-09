@@ -1,16 +1,21 @@
+import { Save } from "lucide-react";
 import { useEffect, useState, type FormEvent } from "react";
+import Button from "./components/Button";
+import Card from "./components/Card";
+import LanguageRoute from "./components/LanguageRoute";
+import Notice from "./components/Notice";
+import Select from "./components/Select";
+import Slider from "./components/Slider";
+import TextField from "./components/TextField";
+import Toggle from "./components/Toggle";
 import {
   getSettings,
   isAppError,
   saveSettings,
-  type Language,
   type Settings,
 } from "./lib/api";
-
-const LANGUAGES: { value: Language; label: string }[] = [
-  { value: "es", label: "Spanish" },
-  { value: "en", label: "English" },
-];
+import { LANGUAGE_OPTIONS, sourceLanguageFor } from "./lib/languages";
+import "./SettingsForm.css";
 
 function errorMessage(reason: unknown): string {
   return isAppError(reason) ? reason.message : String(reason);
@@ -22,7 +27,7 @@ function optionalText(value: string): string | null {
 }
 
 /**
- * Minimal settings form: languages, ducking, enabled toggles, devices and source app.
+ * Settings form: languages, ducking, enabled toggles, devices and source app, grouped per direction.
  *
  * Devices and the source app are plain text fields until real device/process listing exists.
  */
@@ -41,7 +46,11 @@ function SettingsForm() {
   }, []);
 
   if (!settings) {
-    return error ? <p role="alert">{error}</p> : <p>Loading settings…</p>;
+    return error ? (
+      <Notice tone="error">{error}</Notice>
+    ) : (
+      <p className="ld-settings__loading">Loading settings…</p>
+    );
   }
 
   const { incoming, outgoing } = settings;
@@ -84,40 +93,40 @@ function SettingsForm() {
     incoming.sourceApp.kind === "process" ? incoming.sourceApp.name : "";
 
   return (
-    <form onSubmit={(event) => void handleSubmit(event)}>
-      <fieldset>
-        <legend>Incoming (others → you)</legend>
-        <label>
-          <input
-            type="checkbox"
+    <form
+      className="ld-settings"
+      onSubmit={(event) => void handleSubmit(event)}
+    >
+      <div className="ld-route-grid">
+        <Card
+          direction="incoming"
+          eyebrow="Incoming"
+          title="Others → you"
+          aria-label="Incoming (others → you)"
+          aside={
+            <LanguageRoute
+              direction="incoming"
+              size="sm"
+              from={sourceLanguageFor(incoming.targetLanguage)}
+              to={incoming.targetLanguage}
+            />
+          }
+        >
+          <Toggle
+            direction="incoming"
+            label="Translate incoming audio"
             checked={incoming.enabled}
-            onChange={(event) =>
-              updateIncoming({ enabled: event.target.checked })
-            }
+            onChange={(enabled) => updateIncoming({ enabled })}
           />
-          Translate incoming audio
-        </label>
-        <label>
-          Translate others into
-          <select
+          <Select
+            label="Translate others into"
             value={incoming.targetLanguage}
-            onChange={(event) =>
-              updateIncoming({
-                targetLanguage: event.target.value as Language,
-              })
-            }
-          >
-            {LANGUAGES.map(({ value, label }) => (
-              <option key={value} value={value}>
-                {label}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          Source app (empty = whole system)
-          <input
-            type="text"
+            options={LANGUAGE_OPTIONS}
+            onChange={(targetLanguage) => updateIncoming({ targetLanguage })}
+          />
+          <TextField
+            label="Source app"
+            hint="Leave empty to translate the whole system (except LiveDub Voice)."
             placeholder="e.g. Discord.exe"
             value={sourceProcess}
             onChange={(event) => {
@@ -130,11 +139,9 @@ function SettingsForm() {
               });
             }}
           />
-        </label>
-        <label>
-          Headphones device id (empty = default)
-          <input
-            type="text"
+          <TextField
+            label="Headphones device id"
+            hint="Leave empty to use the default playback device."
             value={incoming.outputDeviceId ?? ""}
             onChange={(event) =>
               updateIncoming({
@@ -142,54 +149,45 @@ function SettingsForm() {
               })
             }
           />
-        </label>
-        <label>
-          Original audio volume: {incoming.originalVolume}%
-          <input
-            type="range"
-            min={0}
-            max={100}
+          <Slider
+            direction="incoming"
+            label="Original audio volume"
+            hint="How loud the original voices stay under the translation."
             value={incoming.originalVolume}
-            onChange={(event) =>
-              updateIncoming({ originalVolume: Number(event.target.value) })
-            }
+            formatValue={(value) => `${value}%`}
+            onChange={(originalVolume) => updateIncoming({ originalVolume })}
           />
-        </label>
-      </fieldset>
+        </Card>
 
-      <fieldset>
-        <legend>Outgoing (you → others)</legend>
-        <label>
-          <input
-            type="checkbox"
+        <Card
+          direction="outgoing"
+          eyebrow="Outgoing"
+          title="You → others"
+          aria-label="Outgoing (you → others)"
+          aside={
+            <LanguageRoute
+              direction="outgoing"
+              size="sm"
+              from={sourceLanguageFor(outgoing.targetLanguage)}
+              to={outgoing.targetLanguage}
+            />
+          }
+        >
+          <Toggle
+            direction="outgoing"
+            label="Translate your microphone"
             checked={outgoing.enabled}
-            onChange={(event) =>
-              updateOutgoing({ enabled: event.target.checked })
-            }
+            onChange={(enabled) => updateOutgoing({ enabled })}
           />
-          Translate your microphone
-        </label>
-        <label>
-          Translate you into
-          <select
+          <Select
+            label="Translate you into"
             value={outgoing.targetLanguage}
-            onChange={(event) =>
-              updateOutgoing({
-                targetLanguage: event.target.value as Language,
-              })
-            }
-          >
-            {LANGUAGES.map(({ value, label }) => (
-              <option key={value} value={value}>
-                {label}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          Microphone device id (empty = default)
-          <input
-            type="text"
+            options={LANGUAGE_OPTIONS}
+            onChange={(targetLanguage) => updateOutgoing({ targetLanguage })}
+          />
+          <TextField
+            label="Microphone device id"
+            hint="Leave empty to use the default microphone."
             value={outgoing.inputDeviceId ?? ""}
             onChange={(event) =>
               updateOutgoing({
@@ -197,11 +195,9 @@ function SettingsForm() {
               })
             }
           />
-        </label>
-        <label>
-          Virtual cable device id
-          <input
-            type="text"
+          <TextField
+            label="Virtual cable device id"
+            hint="Playback side of a virtual cable (e.g. VB-CABLE). Pick its recording side as the mic in your call or game."
             value={outgoing.outputDeviceId ?? ""}
             onChange={(event) =>
               updateOutgoing({
@@ -209,14 +205,20 @@ function SettingsForm() {
               })
             }
           />
-        </label>
-      </fieldset>
+        </Card>
+      </div>
 
-      <button type="submit" disabled={saving}>
-        {saving ? "Saving…" : "Save"}
-      </button>
-      {status && <p role="status">{status}</p>}
-      {error && <p role="alert">{error}</p>}
+      <div className="ld-settings__footer">
+        <Button
+          type="submit"
+          disabled={saving}
+          icon={<Save size={16} aria-hidden="true" />}
+        >
+          {saving ? "Saving…" : "Save"}
+        </Button>
+        {status && <Notice tone="success">{status}</Notice>}
+        {error && <Notice tone="error">{error}</Notice>}
+      </div>
     </form>
   );
 }

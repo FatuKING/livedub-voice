@@ -1,0 +1,74 @@
+.ld-route {
+  --route-color: var(--color-incoming);
+  --route-on: var(--color-on-incoming);
+  --route-soft: var(--color-incoming-soft);
+  --chip-height: 32px;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.ld-route--outgoing {
+  --route-color: var(--color-outgoing);
+  --route-on: var(--color-on-outgoing);
+  --route-soft: var(--color-outgoing-soft);
+}
+
+.ld-route--sm {
+  --chip-height: 24px;
+  gap: var(--space-1);
+}
+
+.ld-route__chip {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: calc(var(--chip-height) * 1.5);
+  height: var(--chip-height);
+  padding: 0 var(--space-2);
+  border: 1.5px solid var(--route-color);
+  border-radius: var(--radius-pill);
+  background: var(--route-soft);
+  color: var(--color-text);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-bold);
+  letter-spacing: 0.06em;
+}
+
+/* Destination chip is filled: "where you land". */
+.ld-route__chip--to {
+  background: var(--route-color);
+  color: var(--route-on);
+}
+
+.ld-route--sm .ld-route__chip {
+  font-size: var(--font-size-xs);
+}
+
+.ld-route__path {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.ld-route__path::before {
+  content: "";
+  position: absolute;
+  inset: 50% 0 auto;
+  border-top: 2px dashed var(--route-color);
+}
+
+.ld-route__plane {
+  position: relative;
+  padding: 0 var(--space-1);
+  box-sizing: content-box;
+  background: var(--route-bg, var(--color-surface));
+  color: var(--route-color);
+  /* Lucide's plane points up-right; turn it to fly along the route. */
+  transform: rotate(45deg);
+}
