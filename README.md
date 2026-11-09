@@ -1,5 +1,7 @@
 # LiveDub Voice
 
+[![CI](https://github.com/FatuKING/livedub-voice/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/FatuKING/livedub-voice/actions/workflows/ci.yml)
+
 **Real-time voice translation for calls and games on Windows.** Hear everyone in your language, and let them hear you in theirs — without them installing anything.
 
 > [!WARNING]

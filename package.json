@@ -5,6 +5,7 @@
   "description": "Real-time voice translator for calls and games on Windows",
   "license": "MIT",
   "type": "module",
+  "packageManager": "pnpm@10.17.0",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
