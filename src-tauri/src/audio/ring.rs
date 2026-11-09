@@ -71,6 +71,12 @@ impl AudioProducer {
     pub fn is_abandoned(&self) -> bool {
         self.inner.is_abandoned()
     }
+
+    /// Whole frames queued and not read yet. Lets a feeder keep the queue at a target level
+    /// (the consumer may read concurrently, so it is a snapshot).
+    pub fn queued_frames(&self) -> usize {
+        (self.inner.buffer().capacity() - self.inner.slots()) / self.channels
+    }
 }
 
 /// Reading side, owned by the consuming thread (for example the playback thread).

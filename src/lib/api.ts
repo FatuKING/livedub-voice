@@ -18,6 +18,8 @@ export interface AppInfo {
   name: string;
   version: string;
   profile: "debug" | "release";
+  /** Whether `LIVEDUB_FAKE_TRANSLATOR` replaces OpenAI (no API key needed). */
+  fakeTranslator: boolean;
 }
 
 /** Returns true when `value` has the shape of an {@link AppError}. */
@@ -231,5 +233,71 @@ export function onMonitorStopped(
 ): Promise<UnlistenFn> {
   return listen<{ message: string }>("monitor-stopped", (event) =>
     handler(event.payload.message),
+  );
+}
+
+/** What a translation pipeline is doing. Mirrors `PipelineState` in `src-tauri/src/pipeline/mod.rs`. */
+export type PipelineState = "idle" | "connecting" | "live" | "error";
+
+/** A pipeline's state, and the error that stopped it (only with `"error"`). */
+export interface PipelineStatus {
+  state: PipelineState;
+  error: AppError | null;
+}
+
+/**
+ * Starts translating the microphone into the virtual cable with the saved `outgoing` settings.
+ * Does nothing if it already runs.
+ *
+ * Rejects with an {@link AppError}: `"no_api_key"`, `"no_output_device"`, `"device_missing"`,
+ * `"audio"`, or a translator code such as `"openai_auth"` or `"network"`.
+ */
+export function startOutgoing(): Promise<void> {
+  return invoke<void>("start_outgoing");
+}
+
+/** Stops the outgoing translation (if it runs), resolving once it has stopped. */
+export function stopOutgoing(): Promise<void> {
+  return invoke<void>("stop_outgoing");
+}
+
+/** The outgoing translation's latest status. */
+export function getOutgoingStatus(): Promise<PipelineStatus> {
+  return invoke<PipelineStatus>("get_outgoing_status");
+}
+
+/** Calls `handler` each time the outgoing translation's status changes. */
+export function onOutgoingStatus(
+  handler: (status: PipelineStatus) => void,
+): Promise<UnlistenFn> {
+  return listen<PipelineStatus>("outgoing-status", (event) =>
+    handler(event.payload),
+  );
+}
+
+/** Calls `handler` with the outgoing microphone level, ~20 times per second while live. */
+export function onOutgoingLevel(
+  handler: (level: InputLevel) => void,
+): Promise<UnlistenFn> {
+  return listen<InputLevel>("outgoing-level", (event) =>
+    handler(event.payload),
+  );
+}
+
+/** Calls `handler` with each new piece of translated text (what the others hear). */
+export function onOutgoingTranscript(
+  handler: (delta: string) => void,
+): Promise<UnlistenFn> {
+  return listen<{ delta: string }>("outgoing-transcript", (event) =>
+    handler(event.payload.delta),
+  );
+}
+
+/** Calls `handler` with the seconds of microphone audio sent since start, every second. */
+export function onOutgoingAudioSent(
+  handler: (seconds: number) => void,
+): Promise<UnlistenFn> {
+  return listen<{ seconds: number }>("outgoing-audio-sent", (event) =>
+    handler(event.payload.seconds),
   );
 }

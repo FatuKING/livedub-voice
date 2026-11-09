@@ -38,6 +38,7 @@ pub fn run() {
             app.manage(credentials::Credentials::system());
             app.manage(credentials::validation::KeyValidator::new()?);
             app.manage(commands::MonitorState::default());
+            app.manage(commands::OutgoingState::default());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -50,7 +51,10 @@ pub fn run() {
             commands::delete_api_key,
             commands::list_audio_devices,
             commands::start_monitor,
-            commands::stop_monitor
+            commands::stop_monitor,
+            commands::start_outgoing,
+            commands::stop_outgoing,
+            commands::get_outgoing_status
         ])
         .run(tauri::generate_context!());
 
