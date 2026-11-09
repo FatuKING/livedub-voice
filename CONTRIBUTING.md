@@ -38,12 +38,19 @@ To test translation end to end you need your own OpenAI API key and a virtual au
 
 ## Branches
 
-Create a branch from `main` for each change:
+Create a branch from `main` for each change, named `<type>/<short-slug>`, where `<type>` is the same Conventional Commits type the PR will use:
 
-- Maintainer tasks: `task/<id>-<short-slug>` (for example `task/1.2-repo-base-files`).
-- Outside contributors: `feat/<short-slug>` for new features, `fix/<short-slug>` for bug fixes (for example `fix/loopback-device-crash`).
+| Type        | Use it for                              | Example                         |
+| ----------- | --------------------------------------- | ------------------------------- |
+| `feat/`     | New features                            | `feat/process-loopback-capture` |
+| `fix/`      | Bug fixes                               | `fix/loopback-device-crash`     |
+| `docs/`     | Documentation only                      | `docs/usage-discord`            |
+| `refactor/` | Code changes that don't change behavior | `refactor/audio-buffers`        |
+| `test/`     | Adding or fixing tests                  | `test/resampler-roundtrip`      |
+| `ci/`       | GitHub Actions and build pipeline       | `ci/windows-build`              |
+| `chore/`    | Tooling, dependencies, repo config      | `chore/upgrade-eslint`          |
 
-Never push directly to `main`.
+Use lowercase and hyphens. Never push directly to `main`.
 
 ## Commit messages
 
@@ -66,7 +73,7 @@ fix(panel): keep the API key field masked after validation
 - Use a Conventional Commits title for the PR (for example `fix: handle device disconnects`).
 - In the description, explain **what** changed and **why**, link the related issue if there is one, and describe **how you tested it** (commands you ran, what you checked manually in the app).
 - Make sure `pnpm build` and `cargo build` pass before asking for review.
-- PRs are merged by the maintainer using **squash merge** after review, so the PR title becomes the commit message on `main`.
+- PRs are merged by the maintainer using **squash merge** after review (it is the only merge method enabled), so the PR title becomes the commit message on `main`. The branch is deleted automatically after merging.
 
 If a change affects the project requirements or decisions described in [CLAUDE.md](CLAUDE.md), update that file in the same PR.
 

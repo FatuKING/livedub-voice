@@ -88,8 +88,8 @@ Out of scope for v1: macOS/Linux, other languages, voice selection, other AI pro
 - Product tasks live in `TASK.md` at the repo root. **That file is local and never pushed to GitHub** (it is in `.gitignore`). Never stage or commit it.
 - **One task = one Claude session = one pull request.** A planning session decides scope; each task from `TASK.md` is implemented in its own session.
 - **Every change goes through a PR.** Never push directly to `main`. (Only exception: the initial scaffold commit that created `main`.)
-  - Branch: `task/<id>-<short-slug>` (e.g. `task/1.2-repo-base-files`).
-  - PR title follows Conventional Commits (e.g. `chore: add license and base repo files`); the body says which task it closes and how it was tested.
-  - Merge strategy: **squash merge**, done by the maintainer after review.
+  - Branch: `<type>/<short-slug>` using the Conventional Commits type of the PR (e.g. `feat/process-loopback-capture`, `chore/lint-tooling`). Never reference `TASK.md` ids in branches, commits or PRs: contributors can't see that file.
+  - PR title follows Conventional Commits (e.g. `chore: add license and base repo files`); the body says what changed, why, and how it was tested.
+  - Merge strategy: **squash merge** only (the repo allows nothing else; the PR title becomes the commit, branches are deleted on merge), done by the maintainer after review.
 - When a task is done, its session reports back; `TASK.md` is updated in the planning session.
 - When a decision changes the requirements, update this `CLAUDE.md` (in the task's PR).
