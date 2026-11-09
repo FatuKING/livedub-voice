@@ -50,10 +50,10 @@ Out of scope for v1: macOS/Linux, other languages, voice selection, other AI pro
   - No voice selection (voice adapts to the speaker), no custom prompts/glossaries, no turn lifecycle.
   - Speech already in the target language may produce silence → keep original audio mixed in (ducked).
   - Price: **$0.034 per audio minute** (both directions active ≈ $4/hour).
-- **Incoming capture:** WASAPI *process loopback* (`AUDIOCLIENT_ACTIVATION_TYPE_PROCESS_LOOPBACK`), either including a target process tree or excluding our own process tree (avoids feedback loops). No driver needed.
+- **Incoming capture:** WASAPI _process loopback_ (`AUDIOCLIENT_ACTIVATION_TYPE_PROCESS_LOOPBACK`), either including a target process tree or excluding our own process tree (avoids feedback loops). No driver needed.
 - **Outgoing output:** Windows cannot create a virtual microphone without a driver. The app writes translated audio to a virtual cable's playback endpoint; the user selects the cable's recording endpoint as mic in the call/game app.
   - **Driver strategy (v1): driver-agnostic.** LiveDub Voice does not ship or install any driver. The outgoing pipeline writes to whatever output device the user picks. On startup the panel detects known virtual cables (VB-CABLE, Virtual-Audio-Driver, VoiceMeeter, …) and, if none is found, guides the user to install one. Bundling Virtual-Audio-Driver (MIT) as an optional installer component may be revisited later.
-- **Usage data:** the OpenAI Usage/Costs API requires an *Admin key*, so usage is metered locally (minutes per session × price). Optional Admin key support may come later.
+- **Usage data:** the OpenAI Usage/Costs API requires an _Admin key_, so usage is metered locally (minutes per session × price). Optional Admin key support may come later.
 
 ## Tech stack
 
