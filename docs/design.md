@@ -131,6 +131,17 @@ Icons come from `lucide-react` (ISC), imported one by one so only the icons in u
 - Never convey meaning by color alone: route cards also say "Incoming"/"Outgoing", pills carry a text label.
 - Disabled actions explain why next to them (`aria-describedby`), like the "Coming soon" start buttons.
 
+## Language
+
+The panel is translated into **English and Spanish**; the user picks it in Settings → App language (`System` follows the Windows display language).
+
+- Every user-visible string — labels, hints, placeholders, `aria-label`s, empty states, notices, error texts — lives in the dictionaries in [`src/i18n/`](../src/i18n): [`en.ts`](../src/i18n/en.ts) is the source of truth, [`es.ts`](../src/i18n/es.ts) must have the same keys (a missing key fails `tsc` and a test). Add new strings in **both** languages, in the same change.
+- Read them with `useT()` (`t("settings.title")`, `{name}` placeholders, `one`/`other` plurals by `count`) or `useI18n()` for `rich()` (React nodes in placeholders) and the `format` helpers. Format numbers, prices (USD) and dates with `format`, never by hand.
+- Core errors arrive as `{ code, message }`: give each new code a message under `errors` and show it with `translateError()`; unknown codes fall back to the core's English message.
+- Spanish is neutral: no "tú"/"vos" verb forms (prefer infinitives and impersonal phrasing; "tu"/"te" are fine). Product terms (LiveDub Voice, OpenAI, API key, VB-CABLE) stay as they are.
+- Leave room for text that grows: Spanish runs ~20–30% longer than English.
+- Code, comments, commits and docs stay in English; only the dictionaries hold other languages.
+
 ## Do and don't
 
 **Do**
@@ -138,6 +149,7 @@ Icons come from `lucide-react` (ISC), imported one by one so only the icons in u
 - Use teal for anything incoming and coral for anything outgoing, and nothing else for those colors.
 - Use tokens for every color, size, radius and duration.
 - Reuse the components; extend them with a prop before writing new CSS in a screen.
+- Put every new user-visible string in `src/i18n/en.ts` and `src/i18n/es.ts`.
 - Check contrast when you introduce a new text/background pair, in both themes.
 
 **Don't**

@@ -9,9 +9,10 @@ import Select from "./components/Select";
 import Slider from "./components/Slider";
 import TextField from "./components/TextField";
 import Toggle from "./components/Toggle";
+import { useI18n } from "./i18n/context";
+import { failureText, type Failure } from "./i18n/errors";
 import {
   getSettings,
-  isAppError,
   listAudioDevices,
   saveSettings,
   type AudioDevice,
@@ -24,12 +25,8 @@ import {
   deviceOptions,
   hasVirtualCable,
 } from "./lib/devices";
-import { LANGUAGE_OPTIONS, sourceLanguageFor } from "./lib/languages";
+import { languageOptions, sourceLanguageFor } from "./lib/languages";
 import "./SettingsForm.css";
-
-function errorMessage(reason: unknown): string {
-  return isAppError(reason) ? reason.message : String(reason);
-}
 
 /**
  * Settings form: languages, ducking, enabled toggles, devices and source app, grouped per direction.
@@ -38,12 +35,13 @@ function errorMessage(reason: unknown): string {
  * field until process listing exists.
  */
 function SettingsForm() {
+  const { t, format, preference } = useI18n();
   const [settings, setSettings] = useState<Settings | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [status, setStatus] = useState<string | null>(null);
+  const [error, setError] = useState<Failure | null>(null);
+  const [saved, setSaved] = useState(false);
   const [saving, setSaving] = useState(false);
   const [devices, setDevices] = useState<AudioDevice[] | null>(null);
-  const [devicesError, setDevicesError] = useState<string | null>(null);
+  const [devicesError, setDevicesError] = useState<Failure | null>(null);
   const [loadingDevices, setLoadingDevices] = useState(false);
 
   const fetchDevices = useCallback(
@@ -54,9 +52,7 @@ function SettingsForm() {
           setDevicesError(null);
         },
         (reason: unknown) => {
-          setDevicesError(
-            `Could not list audio devices: ${errorMessage(reason)}`,
-          );
+          setDevicesError({ key: "settings.devicesError", reason });
         },
       ),
     [],
@@ -75,22 +71,22 @@ function SettingsForm() {
     getSettings()
       .then(setSettings)
       .catch((reason: unknown) => {
-        setError(`Could not load settings: ${errorMessage(reason)}`);
+        setError({ key: "settings.loadError", reason });
       });
   }, []);
 
   if (!settings) {
     return error ? (
-      <Notice tone="error">{error}</Notice>
+      <Notice tone="error">{failureText(error, t)}</Notice>
     ) : (
-      <p className="ld-settings__loading">Loading settings…</p>
+      <p className="ld-settings__loading">{t("settings.loading")}</p>
     );
   }
 
   const { incoming, outgoing } = settings;
 
   function updateIncoming(patch: Partial<Settings["incoming"]>) {
-    setStatus(null);
+    setSaved(false);
     setSettings((current) =>
       current
         ? { ...current, incoming: { ...current.incoming, ...patch } }
@@ -99,7 +95,7 @@ function SettingsForm() {
   }
 
   function updateOutgoing(patch: Partial<Settings["outgoing"]>) {
-    setStatus(null);
+    setSaved(false);
     setSettings((current) =>
       current
         ? { ...current, outgoing: { ...current.outgoing, ...patch } }
@@ -112,12 +108,13 @@ function SettingsForm() {
     if (!settings) return;
     setSaving(true);
     setError(null);
-    setStatus(null);
+    setSaved(false);
     try {
-      setSettings(await saveSettings(settings));
-      setStatus("Settings saved.");
+      // The app language is saved on its own as soon as it changes: keep the current one.
+      setSettings(await saveSettings({ ...settings, uiLanguage: preference }));
+      setSaved(true);
     } catch (reason: unknown) {
-      setError(`Could not save settings: ${errorMessage(reason)}`);
+      setError({ key: "settings.saveError", reason });
     } finally {
       setSaving(false);
     }
@@ -136,9 +133,9 @@ function SettingsForm() {
       <div className="ld-route-grid">
         <Card
           direction="incoming"
-          eyebrow="Incoming"
-          title="Others → you"
-          aria-label="Incoming (others → you)"
+          eyebrow={t("settings.incoming.eyebrow")}
+          title={t("settings.incoming.title")}
+          aria-label={t("settings.incoming.ariaLabel")}
           aside={
             <LanguageRoute
               direction="incoming"
@@ -150,20 +147,20 @@ function SettingsForm() {
         >
           <Toggle
             direction="incoming"
-            label="Translate incoming audio"
+            label={t("settings.incoming.enabled")}
             checked={incoming.enabled}
             onChange={(enabled) => updateIncoming({ enabled })}
           />
           <Select
-            label="Translate others into"
+            label={t("settings.incoming.targetLanguage")}
             value={incoming.targetLanguage}
-            options={LANGUAGE_OPTIONS}
+            options={languageOptions(t)}
             onChange={(targetLanguage) => updateIncoming({ targetLanguage })}
           />
           <TextField
-            label="Source app"
-            hint="Leave empty to translate the whole system (except LiveDub Voice)."
-            placeholder="e.g. Discord.exe"
+            label={t("settings.incoming.sourceApp")}
+            hint={t("settings.incoming.sourceAppHint")}
+            placeholder={t("settings.incoming.sourceAppPlaceholder")}
             value={sourceProcess}
             onChange={(event) => {
               const name = event.target.value;
@@ -176,13 +173,14 @@ function SettingsForm() {
             }}
           />
           <Select
-            label="Headphones"
-            hint="Where you hear the translation."
+            label={t("settings.incoming.headphones")}
+            hint={t("settings.incoming.headphonesHint")}
             value={incoming.outputDeviceId ?? SYSTEM_DEFAULT_VALUE}
             options={deviceOptions({
               devices,
               kind: "output",
               savedId: incoming.outputDeviceId,
+              t,
             })}
             onChange={(value) =>
               updateIncoming({ outputDeviceId: deviceIdFromValue(value) })
@@ -190,19 +188,19 @@ function SettingsForm() {
           />
           <Slider
             direction="incoming"
-            label="Original audio volume"
-            hint="How loud the original voices stay under the translation."
+            label={t("settings.incoming.originalVolume")}
+            hint={t("settings.incoming.originalVolumeHint")}
             value={incoming.originalVolume}
-            formatValue={(value) => `${value}%`}
+            formatValue={(value) => format.percent(value / 100)}
             onChange={(originalVolume) => updateIncoming({ originalVolume })}
           />
         </Card>
 
         <Card
           direction="outgoing"
-          eyebrow="Outgoing"
-          title="You → others"
-          aria-label="Outgoing (you → others)"
+          eyebrow={t("settings.outgoing.eyebrow")}
+          title={t("settings.outgoing.title")}
+          aria-label={t("settings.outgoing.ariaLabel")}
           aside={
             <LanguageRoute
               direction="outgoing"
@@ -214,34 +212,35 @@ function SettingsForm() {
         >
           <Toggle
             direction="outgoing"
-            label="Translate your microphone"
+            label={t("settings.outgoing.enabled")}
             checked={outgoing.enabled}
             onChange={(enabled) => updateOutgoing({ enabled })}
           />
           <Select
-            label="Translate you into"
+            label={t("settings.outgoing.targetLanguage")}
             value={outgoing.targetLanguage}
-            options={LANGUAGE_OPTIONS}
+            options={languageOptions(t)}
             onChange={(targetLanguage) => updateOutgoing({ targetLanguage })}
           />
           <Select
-            label="Microphone"
+            label={t("settings.outgoing.microphone")}
             value={outgoing.inputDeviceId ?? SYSTEM_DEFAULT_VALUE}
             options={deviceOptions({
               devices,
               kind: "input",
               savedId: outgoing.inputDeviceId,
+              t,
             })}
             onChange={(value) =>
               updateOutgoing({ inputDeviceId: deviceIdFromValue(value) })
             }
           />
           <Select
-            label="Virtual cable"
+            label={t("settings.outgoing.virtualCable")}
             hint={
               missingCable
-                ? "No virtual cable found. Install a virtual cable such as VB-CABLE, then refresh the devices."
-                : "Playback side of a virtual cable (e.g. CABLE Input). Pick its recording side as the mic in your call or game."
+                ? t("settings.outgoing.virtualCableMissing")
+                : t("settings.outgoing.virtualCableHint")
             }
             value={outgoing.outputDeviceId ?? SYSTEM_DEFAULT_VALUE}
             options={deviceOptions({
@@ -249,6 +248,7 @@ function SettingsForm() {
               kind: "output",
               savedId: outgoing.outputDeviceId,
               cablesFirst: true,
+              t,
             })}
             onChange={(value) =>
               updateOutgoing({ outputDeviceId: deviceIdFromValue(value) })
@@ -268,7 +268,7 @@ function SettingsForm() {
           disabled={saving}
           icon={<Save size={16} aria-hidden="true" />}
         >
-          {saving ? "Saving…" : "Save"}
+          {saving ? t("settings.saving") : t("settings.save")}
         </Button>
         <Button
           variant="secondary"
@@ -276,11 +276,15 @@ function SettingsForm() {
           icon={<RefreshCw size={16} aria-hidden="true" />}
           onClick={refreshDevices}
         >
-          {loadingDevices ? "Refreshing…" : "Refresh devices"}
+          {loadingDevices
+            ? t("settings.refreshing")
+            : t("settings.refreshDevices")}
         </Button>
-        {devicesError && <Notice tone="error">{devicesError}</Notice>}
-        {status && <Notice tone="success">{status}</Notice>}
-        {error && <Notice tone="error">{error}</Notice>}
+        {devicesError && (
+          <Notice tone="error">{failureText(devicesError, t)}</Notice>
+        )}
+        {saved && <Notice tone="success">{t("settings.saved")}</Notice>}
+        {error && <Notice tone="error">{failureText(error, t)}</Notice>}
       </div>
     </form>
   );

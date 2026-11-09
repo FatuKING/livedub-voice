@@ -1,5 +1,6 @@
 import { Eye, EyeOff } from "lucide-react";
 import { useState, type InputHTMLAttributes, type ReactNode } from "react";
+import { useT } from "../i18n/context";
 import Field from "./Field";
 import "./SecretField.css";
 
@@ -13,6 +14,7 @@ export interface SecretFieldProps extends Omit<
 
 /** Password-style input with a show/hide toggle, for secrets such as an API key. */
 function SecretField({ label, hint, className, ...rest }: SecretFieldProps) {
+  const t = useT();
   const [visible, setVisible] = useState(false);
   return (
     <Field label={label} hint={hint}>
@@ -33,7 +35,11 @@ function SecretField({ label, hint, className, ...rest }: SecretFieldProps) {
           <button
             type="button"
             className="ld-secret__toggle"
-            aria-label={visible ? "Hide key" : "Show key"}
+            aria-label={
+              visible
+                ? t("components.secretField.hide")
+                : t("components.secretField.show")
+            }
             aria-pressed={visible}
             onClick={() => setVisible((current) => !current)}
           >

@@ -1,8 +1,9 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, screen } from "@testing-library/react";
 import { invoke } from "@tauri-apps/api/core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import SettingsForm from "./SettingsForm";
 import type { AudioDevice, Settings } from "./lib/api";
+import { render } from "./test/i18n";
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(),
@@ -11,7 +12,8 @@ vi.mock("@tauri-apps/api/core", () => ({
 const invokeMock = vi.mocked(invoke);
 
 const defaults: Settings = {
-  version: 1,
+  version: 2,
+  uiLanguage: "system",
   incoming: {
     enabled: false,
     targetLanguage: "es",
@@ -108,7 +110,9 @@ describe("SettingsForm", () => {
     );
     expect(invokeMock).toHaveBeenCalledWith("save_settings", {
       settings: {
-        version: 1,
+        version: 2,
+        // The form saves the language the panel is showing (English here).
+        uiLanguage: "en",
         incoming: {
           enabled: true,
           targetLanguage: "es",
@@ -144,7 +148,7 @@ describe("SettingsForm", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Save" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Could not save settings: invalid settings: bad volume",
+      "Could not save settings: The settings are not valid (bad volume).",
     );
   });
 
@@ -154,7 +158,7 @@ describe("SettingsForm", () => {
     render(<SettingsForm />);
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Could not load settings: I/O error: denied",
+      "Could not load settings: A file could not be read or written (denied).",
     );
   });
 
@@ -275,7 +279,7 @@ describe("SettingsForm", () => {
     render(<SettingsForm />);
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Could not list audio devices: audio device error: could not list audio devices",
+      "Could not list audio devices: Audio device error (could not list audio devices).",
     );
     expect(screen.getByLabelText("Headphones")).toHaveValue("");
   });

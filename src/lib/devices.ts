@@ -1,4 +1,5 @@
 import type { SelectOption } from "../components/Select";
+import type { Translate } from "../i18n/translate";
 import type { AudioDevice } from "./api";
 
 /** Select value for "use the system default device" (stored as `null` in settings). */
@@ -12,10 +13,12 @@ export interface DeviceOptionsInput {
   savedId: string | null;
   /** List virtual cables before other devices (for the outgoing output). */
   cablesFirst?: boolean;
+  /** Translates the option labels. */
+  t: Translate;
 }
 
 /**
- * Options for a device select: "System default", then the devices of `kind`.
+ * Options for a device select: the system default, then the devices of `kind`.
  *
  * A saved id that is not in the list is kept as an extra option instead of being dropped, so
  * saving the form never loses it silently.
@@ -25,6 +28,7 @@ export function deviceOptions({
   kind,
   savedId,
   cablesFirst = false,
+  t,
 }: DeviceOptionsInput): SelectOption<string>[] {
   const ofKind = (devices ?? []).filter((device) => device.kind === kind);
   const ordered = cablesFirst
@@ -35,17 +39,19 @@ export function deviceOptions({
     : ofKind;
 
   const options: SelectOption<string>[] = [
-    { value: SYSTEM_DEFAULT_VALUE, label: "System default" },
+    { value: SYSTEM_DEFAULT_VALUE, label: t("devices.systemDefault") },
     ...ordered.map((device) => ({
       value: device.id,
-      label: device.isDefault ? `${device.name} (default)` : device.name,
+      label: device.isDefault
+        ? t("devices.isDefault", { name: device.name })
+        : device.name,
     })),
   ];
 
   if (savedId !== null && !ofKind.some((device) => device.id === savedId)) {
     options.push({
       value: savedId,
-      label: devices === null ? "Saved device" : "Unavailable device",
+      label: devices === null ? t("devices.saved") : t("devices.unavailable"),
     });
   }
   return options;

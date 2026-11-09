@@ -28,7 +28,7 @@ Out of scope for v1: macOS/Linux, other languages, voice selection, other AI pro
 1. **Incoming translation:** capture the audio of other participants (a specific app such as Discord/Teams/browser/game, or the whole system minus LiveDub Voice) and play the translation through the user's headphones.
 2. **Outgoing translation:** capture the user's microphone, translate it, and send it to a virtual microphone that the call/game app uses as its input.
 3. **OpenAI configuration:** the user enters and validates their OpenAI API key from the panel.
-4. **Configuration panel:** API key, language direction, input/output devices, source app to capture, original-audio volume (ducking), start/stop each direction.
+4. **Configuration panel:** app (panel) language — System, English or Spanish; API key, language direction, input/output devices, source app to capture, original-audio volume (ducking), start/stop each direction.
 5. **Usage panel:** minutes translated and estimated cost, per session and historical.
 6. **Live captions:** show the transcript of the translations in the panel.
 7. **README:** how to install and use it (Meet, Teams, Discord, games), license, and how to contribute.
@@ -86,6 +86,7 @@ Out of scope for v1: macOS/Linux, other languages, voice selection, other AI pro
 - All panel UI uses the Ruta tokens (`src/styles/tokens.css`) and components (`src/components/`); no hard-coded colors or one-off styles in screens.
 - Color meanings are fixed: **incoming (others → you) = teal**, **outgoing (you → others) = coral**, sun/amber = warnings and highlights, red = errors.
 - Dark and light themes follow the OS; text must meet WCAG AA in both.
+- The panel UI is available in **English and Spanish** (`uiLanguage` setting: `system` follows the Windows display language, `es*` → Spanish, anything else → English). Every new user-visible string (labels, hints, aria-labels, empty states, notices, error texts) goes through the dictionaries in `src/i18n/` (`en.ts` is the source of truth, `es.ts` must have the same keys) — in **both** languages, never hard-coded in a component. Core error codes get a translated message in `errors`. Code, comments, commits and docs stay in English.
 
 ## Conventions
 

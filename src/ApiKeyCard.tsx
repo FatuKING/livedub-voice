@@ -5,20 +5,19 @@ import Card from "./components/Card";
 import Notice, { type NoticeTone } from "./components/Notice";
 import SecretField from "./components/SecretField";
 import StatusPill, { type StatusTone } from "./components/StatusPill";
+import { useI18n } from "./i18n/context";
+import { failureText, type Failure } from "./i18n/errors";
+import type { Translate } from "./i18n/translate";
 import {
   deleteApiKey,
   getApiKeyStatus,
-  isAppError,
   saveApiKey,
   validateApiKey,
   type ApiKeyStatus,
   type KeyValidation,
 } from "./lib/api";
+import { PRICE_PER_MINUTE_USD } from "./lib/pricing";
 import "./ApiKeyCard.css";
-
-function errorMessage(reason: unknown): string {
-  return isAppError(reason) ? reason.message : String(reason);
-}
 
 /** What the pill shows: the stored key's state as far as the panel knows. */
 type KeyState =
@@ -27,70 +26,57 @@ type KeyState =
   | { kind: "checking" }
   | { kind: "checked"; validation: KeyValidation };
 
-const PILLS: Record<
-  KeyValidation["kind"],
-  { tone: StatusTone; label: string }
-> = {
-  valid: { tone: "neutral", label: "Valid" },
-  invalidKey: { tone: "danger", label: "Invalid" },
-  noModelAccess: { tone: "danger", label: "No model access" },
-  rateLimited: { tone: "sun", label: "Rate limited" },
-  offline: { tone: "sun", label: "Offline" },
-  unexpected: { tone: "sun", label: "Could not check" },
+const PILL_TONES: Record<KeyValidation["kind"], StatusTone> = {
+  valid: "neutral",
+  invalidKey: "danger",
+  noModelAccess: "danger",
+  rateLimited: "sun",
+  offline: "sun",
+  unexpected: "sun",
 };
 
-function pillFor(state: KeyState): { tone: StatusTone; label: string } {
+function pillFor(
+  state: KeyState,
+  t: Translate,
+): { tone: StatusTone; label: string } {
   switch (state.kind) {
     case "loading":
-      return { tone: "neutral", label: "Loading" };
+      return { tone: "neutral", label: t("apiKey.pill.loading") };
     case "notSet":
-      return { tone: "sun", label: "Not set" };
+      return { tone: "sun", label: t("apiKey.pill.notSet") };
     case "checking":
-      return { tone: "neutral", label: "Checking" };
-    case "checked":
-      return PILLS[state.validation.kind];
+      return { tone: "neutral", label: t("apiKey.pill.checking") };
+    case "checked": {
+      const kind = state.validation.kind;
+      return { tone: PILL_TONES[kind], label: t(`apiKey.pill.${kind}`) };
+    }
   }
 }
 
+const RESULT_TONES: Record<KeyValidation["kind"], NoticeTone> = {
+  valid: "success",
+  invalidKey: "error",
+  noModelAccess: "error",
+  rateLimited: "warning",
+  offline: "warning",
+  unexpected: "warning",
+};
+
 /** Explains a check result and what to do about it. */
-function describe(validation: KeyValidation): {
-  tone: NoticeTone;
-  text: string;
-} {
-  switch (validation.kind) {
-    case "valid":
-      return {
-        tone: "success",
-        text: "OpenAI accepted the key. This check does not spend credits, so a key with no credits also passes: if translation fails later, check billing on platform.openai.com.",
-      };
-    case "invalidKey":
-      return {
-        tone: "error",
-        text: "OpenAI rejected this key. Check that it was copied completely, or create a new one.",
-      };
-    case "noModelAccess":
-      return {
-        tone: "error",
-        text: "The key works, but this account cannot use gpt-realtime-translate yet. Make sure billing is set up on platform.openai.com and that the key's project has access to the model.",
-      };
-    case "rateLimited":
-      return {
-        tone: "warning",
-        text: "OpenAI is rate limiting requests. The key is saved; check again in a minute.",
-      };
-    case "offline":
-      return {
-        tone: "warning",
-        text: "Could not reach OpenAI. The key is saved; check your connection and try again.",
-      };
-    case "unexpected":
-      return {
-        tone: "warning",
-        text: `OpenAI answered unexpectedly${
-          validation.status == null ? "" : ` (HTTP ${validation.status})`
-        }. The key is saved; try again later.`,
-      };
+function describe(
+  validation: KeyValidation,
+  t: Translate,
+): { tone: NoticeTone; text: string } {
+  const tone = RESULT_TONES[validation.kind];
+  if (validation.kind === "unexpected" && validation.status != null) {
+    return {
+      tone,
+      text: t("apiKey.result.unexpectedStatus", {
+        status: String(validation.status),
+      }),
+    };
   }
+  return { tone, text: t(`apiKey.result.${validation.kind}`) };
 }
 
 /**
@@ -98,12 +84,13 @@ function describe(validation: KeyValidation): {
  * Windows Credential Manager; the panel only ever sees its last four characters.
  */
 function ApiKeyCard() {
+  const { t, rich, format } = useI18n();
   const [status, setStatus] = useState<ApiKeyStatus | null>(null);
   const [state, setState] = useState<KeyState>({ kind: "loading" });
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [confirmingRemove, setConfirmingRemove] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<Failure | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -124,7 +111,7 @@ function ApiKeyCard() {
         setState((current) =>
           current.kind === "checking" ? { kind: "notSet" } : current,
         );
-        setError(`Could not read the API key: ${errorMessage(reason)}`);
+        setError({ key: "apiKey.readError", reason });
       });
     return () => {
       active = false;
@@ -146,7 +133,7 @@ function ApiKeyCard() {
       setInput("");
     } catch (reason: unknown) {
       setState(previous);
-      setError(`Could not save the key: ${errorMessage(reason)}`);
+      setError({ key: "apiKey.saveError", reason });
     } finally {
       setBusy(false);
     }
@@ -160,7 +147,7 @@ function ApiKeyCard() {
       setState({ kind: "checked", validation: await validateApiKey() });
     } catch (reason: unknown) {
       setState({ kind: "notSet" });
-      setError(`Could not check the key: ${errorMessage(reason)}`);
+      setError({ key: "apiKey.checkError", reason });
     } finally {
       setBusy(false);
     }
@@ -174,34 +161,42 @@ function ApiKeyCard() {
       setState({ kind: "notSet" });
       setConfirmingRemove(false);
     } catch (reason: unknown) {
-      setError(`Could not remove the key: ${errorMessage(reason)}`);
+      setError({ key: "apiKey.removeError", reason });
     } finally {
       setBusy(false);
     }
   }
 
-  const pill = pillFor(state);
-  const result = state.kind === "checked" ? describe(state.validation) : null;
+  const pill = pillFor(state, t);
+  const result =
+    state.kind === "checked" ? describe(state.validation, t) : null;
   const hasKey = status?.hasKey ?? false;
 
   return (
     <Card
       className="ld-api-key"
-      eyebrow="OpenAI"
-      title="API key"
-      aria-label="OpenAI API key"
+      eyebrow={t("apiKey.eyebrow")}
+      title={t("apiKey.title")}
+      aria-label={t("apiKey.ariaLabel")}
       aside={<StatusPill tone={pill.tone}>{pill.label}</StatusPill>}
     >
       <p className="ld-api-key__intro">
-        Create a key at platform.openai.com → API keys. LiveDub Voice stores it
-        in Windows Credential Manager and only sends it to OpenAI. Translation
-        costs about $0.034 per audio minute for each active direction (≈ $4/hour
-        with both on), billed to your OpenAI account.
+        {t("apiKey.intro", {
+          price: format.currency(PRICE_PER_MINUTE_USD, {
+            maximumFractionDigits: 3,
+          }),
+          // Both directions on: 2 × 60 minutes.
+          hourly: format.currency(PRICE_PER_MINUTE_USD * 120, {
+            maximumFractionDigits: 0,
+          }),
+        })}
       </p>
 
       {hasKey && status?.last4 != null && (
         <p className="ld-api-key__saved">
-          Saved key: <span className="mono">sk-…{status.last4}</span>
+          {rich("apiKey.savedKey", {
+            key: <span className="mono">sk-…{status.last4}</span>,
+          })}
         </p>
       )}
 
@@ -212,7 +207,7 @@ function ApiKeyCard() {
         onSubmit={(event) => void handleSave(event)}
       >
         <SecretField
-          label={hasKey ? "Replace API key" : "API key"}
+          label={hasKey ? t("apiKey.replaceLabel") : t("apiKey.label")}
           placeholder="sk-…"
           value={input}
           onChange={(event) => setInput(event.target.value)}
@@ -223,7 +218,7 @@ function ApiKeyCard() {
             disabled={busy || input.trim() === ""}
             icon={<KeyRound size={16} aria-hidden="true" />}
           >
-            Save and validate
+            {t("apiKey.save")}
           </Button>
           {hasKey && !confirmingRemove && (
             <>
@@ -233,7 +228,7 @@ function ApiKeyCard() {
                 icon={<RefreshCw size={16} aria-hidden="true" />}
                 onClick={() => void handleCheck()}
               >
-                Check again
+                {t("apiKey.checkAgain")}
               </Button>
               <Button
                 variant="ghost"
@@ -241,7 +236,7 @@ function ApiKeyCard() {
                 icon={<Trash2 size={16} aria-hidden="true" />}
                 onClick={() => setConfirmingRemove(true)}
               >
-                Remove
+                {t("apiKey.remove")}
               </Button>
             </>
           )}
@@ -249,11 +244,12 @@ function ApiKeyCard() {
       </form>
 
       {confirmingRemove && (
-        <div className="ld-api-key__confirm" role="group" aria-label="Confirm">
-          <Notice tone="warning">
-            Remove the saved key from this PC? Translation stops working until
-            you add a key again.
-          </Notice>
+        <div
+          className="ld-api-key__confirm"
+          role="group"
+          aria-label={t("apiKey.confirmLabel")}
+        >
+          <Notice tone="warning">{t("apiKey.confirmText")}</Notice>
           <div className="ld-api-key__actions">
             <Button
               variant="secondary"
@@ -261,20 +257,20 @@ function ApiKeyCard() {
               icon={<Trash2 size={16} aria-hidden="true" />}
               onClick={() => void handleRemove()}
             >
-              Yes, remove key
+              {t("apiKey.confirmRemove")}
             </Button>
             <Button
               variant="ghost"
               disabled={busy}
               onClick={() => setConfirmingRemove(false)}
             >
-              Cancel
+              {t("apiKey.cancel")}
             </Button>
           </div>
         </div>
       )}
 
-      {error && <Notice tone="error">{error}</Notice>}
+      {error && <Notice tone="error">{failureText(error, t)}</Notice>}
     </Card>
   );
 }

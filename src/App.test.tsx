@@ -1,7 +1,8 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { fireEvent, screen, within } from "@testing-library/react";
 import { invoke } from "@tauri-apps/api/core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
+import { render } from "./test/i18n";
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(),
@@ -56,7 +57,7 @@ describe("App", () => {
     render(<App />);
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Could not read app info: boom",
+      "Could not read app info: Something went wrong inside LiveDub Voice (boom).",
     );
   });
 
@@ -109,7 +110,8 @@ describe("App", () => {
     invokeMock.mockImplementation((command) => {
       if (command === "get_settings") {
         return Promise.resolve({
-          version: 1,
+          version: 2,
+          uiLanguage: "system",
           incoming: {
             enabled: false,
             targetLanguage: "en",

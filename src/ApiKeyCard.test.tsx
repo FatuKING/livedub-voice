@@ -1,8 +1,9 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { fireEvent, screen, within } from "@testing-library/react";
 import { invoke } from "@tauri-apps/api/core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import ApiKeyCard from "./ApiKeyCard";
 import type { ApiKeyStatus, KeyValidation, SaveApiKeyResult } from "./lib/api";
+import { render } from "./test/i18n";
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(),
@@ -119,7 +120,7 @@ describe("ApiKeyCard", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save and validate" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Could not save the key: invalid API key",
+      "Could not save the key: This does not look like an OpenAI API key",
     );
     expect(screen.getByLabelText("API key")).toHaveValue("not-a-key");
     expect(within(card()).getByText("Not set")).toBeInTheDocument();

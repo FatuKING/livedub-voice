@@ -7,14 +7,11 @@ import Notice from "../components/Notice";
 import PageHeader from "../components/PageHeader";
 import Perforation from "../components/Perforation";
 import StatusPill from "../components/StatusPill";
+import { useT } from "../i18n/context";
+import { failureText, type Failure } from "../i18n/errors";
+import { getSettings, type Language, type Settings } from "../lib/api";
 import {
-  getSettings,
-  isAppError,
-  type Language,
-  type Settings,
-} from "../lib/api";
-import {
-  LANGUAGE_NAMES,
+  languageName,
   sourceLanguageFor,
   type Direction,
 } from "../lib/languages";
@@ -32,30 +29,16 @@ interface RouteCardProps {
   details: { label: string; value: string }[];
 }
 
-const COPY: Record<
-  Direction,
-  { eyebrow: string; title: (lang: string) => string; start: string }
-> = {
-  incoming: {
-    eyebrow: "Incoming · others → you",
-    title: (lang) => `Hear others in ${lang}`,
-    start: "Start incoming",
-  },
-  outgoing: {
-    eyebrow: "Outgoing · you → others",
-    title: (lang) => `Others hear you in ${lang}`,
-    start: "Start outgoing",
-  },
-};
-
 function RouteCard({ direction, target, details }: RouteCardProps) {
+  const t = useT();
   const noteId = useId();
-  const copy = COPY[direction];
   return (
     <Card
       direction={direction}
-      eyebrow={copy.eyebrow}
-      title={copy.title(LANGUAGE_NAMES[target])}
+      eyebrow={t(`home.${direction}.eyebrow`)}
+      title={t(`home.${direction}.title`, {
+        language: languageName(target, t),
+      })}
     >
       <LanguageRoute
         direction={direction}
@@ -79,12 +62,12 @@ function RouteCard({ direction, target, details }: RouteCardProps) {
             disabled
             aria-describedby={noteId}
           >
-            {copy.start}
+            {t(`home.${direction}.start`)}
           </Button>
-          <StatusPill tone="sun">Coming soon</StatusPill>
+          <StatusPill tone="sun">{t("home.comingSoon")}</StatusPill>
         </div>
         <p className="ld-route-card__note" id={noteId}>
-          Live translation is not available yet. It is coming in a next version.
+          {t("home.comingSoonNote")}
         </p>
       </div>
     </Card>
@@ -97,14 +80,15 @@ export interface HomeScreenProps {
 
 /** Overview of both translation routes. Start/stop arrives with the audio pipelines. */
 function HomeScreen({ onOpenSettings }: HomeScreenProps) {
+  const t = useT();
   const [settings, setSettings] = useState<Settings | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<Failure | null>(null);
 
   useEffect(() => {
     getSettings()
       .then(setSettings)
       .catch((reason: unknown) => {
-        setError(isAppError(reason) ? reason.message : String(reason));
+        setError({ key: "home.settingsError", reason });
       });
   }, []);
 
@@ -115,24 +99,22 @@ function HomeScreen({ onOpenSettings }: HomeScreenProps) {
   const sourceApp =
     settings?.incoming.sourceApp.kind === "process"
       ? settings.incoming.sourceApp.name
-      : "Whole system";
+      : t("home.wholeSystem");
 
   return (
     <>
-      <PageHeader
-        title="Home"
-        description="Two routes, one for each direction. Choose languages and devices in Settings."
-      />
-      {error && <Notice tone="error">Could not load settings: {error}</Notice>}
+      <PageHeader title={t("home.title")} description={t("home.description")} />
+      {error && <Notice tone="error">{failureText(error, t)}</Notice>}
       <div className="ld-route-grid ld-route-grid--stretch">
         <RouteCard
           direction="incoming"
           target={incomingTarget}
           details={[
-            { label: "Listens to", value: sourceApp },
+            { label: t("home.listensTo"), value: sourceApp },
             {
-              label: "Plays on",
-              value: settings?.incoming.outputDeviceId ?? "Default device",
+              label: t("home.playsOn"),
+              value:
+                settings?.incoming.outputDeviceId ?? t("home.defaultDevice"),
             },
           ]}
         />
@@ -141,19 +123,20 @@ function HomeScreen({ onOpenSettings }: HomeScreenProps) {
           target={outgoingTarget}
           details={[
             {
-              label: "Listens to",
-              value: settings?.outgoing.inputDeviceId ?? "Default microphone",
+              label: t("home.listensTo"),
+              value:
+                settings?.outgoing.inputDeviceId ?? t("home.defaultMicrophone"),
             },
             {
-              label: "Sends to",
-              value: settings?.outgoing.outputDeviceId ?? "Not set",
+              label: t("home.sendsTo"),
+              value: settings?.outgoing.outputDeviceId ?? t("home.notSet"),
             },
           ]}
         />
       </div>
       <div>
         <Button variant="secondary" onClick={onOpenSettings}>
-          Open settings
+          {t("home.openSettings")}
         </Button>
       </div>
     </>
