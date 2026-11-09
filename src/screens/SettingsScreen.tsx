@@ -1,14 +1,18 @@
 import ApiKeyCard from "../ApiKeyCard";
 import PageHeader from "../components/PageHeader";
+import { useT } from "../i18n/context";
 import SettingsForm from "../SettingsForm";
+import UiLanguageCard from "../UiLanguageCard";
 
 function SettingsScreen() {
+  const t = useT();
   return (
     <>
       <PageHeader
-        title="Settings"
-        description="Your OpenAI API key, and the languages, devices and app to translate for each direction."
+        title={t("settings.title")}
+        description={t("settings.description")}
       />
+      <UiLanguageCard />
       <ApiKeyCard />
       <SettingsForm />
     </>

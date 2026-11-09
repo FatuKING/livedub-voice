@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { useI18n } from "../i18n/context";
 import type { Direction } from "../lib/languages";
 import {
   METER_HOT_DB,
@@ -19,6 +20,7 @@ export interface LevelMeterProps {
 
 /** VU bar on a dB scale (−60 to 0 dBFS). Exposed to assistive tech as a `meter`. */
 function LevelMeter({ label, level, peak, direction }: LevelMeterProps) {
+  const { format } = useI18n();
   const percent = amplitudeToMeterPercent(level);
   const peakPercent = peak === undefined ? null : amplitudeToMeterPercent(peak);
   const hot = peak !== undefined && amplitudeToDb(peak) >= METER_HOT_DB;
@@ -36,7 +38,7 @@ function LevelMeter({ label, level, peak, direction }: LevelMeterProps) {
         aria-valuemin={0}
         aria-valuemax={100}
         aria-valuenow={percent}
-        aria-valuetext={`${percent}%`}
+        aria-valuetext={format.percent(percent / 100)}
       >
         <div className="ld-meter__fill" style={{ width: `${percent}%` }} />
         {peakPercent !== null && peakPercent > 0 && (

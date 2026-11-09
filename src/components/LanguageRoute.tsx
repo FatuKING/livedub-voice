@@ -1,6 +1,7 @@
 import { Plane } from "lucide-react";
 import type { Language } from "../lib/api";
-import { LANGUAGE_NAMES, type Direction } from "../lib/languages";
+import { useT } from "../i18n/context";
+import { languageName, type Direction } from "../lib/languages";
 import "./LanguageRoute.css";
 
 export interface LanguageRouteProps {
@@ -22,11 +23,15 @@ function LanguageRoute({
   direction,
   size = "md",
 }: LanguageRouteProps) {
+  const t = useT();
   return (
     <div
       className={`ld-route ld-route--${direction} ld-route--${size}`}
       role="img"
-      aria-label={`${LANGUAGE_NAMES[from]} to ${LANGUAGE_NAMES[to]}`}
+      aria-label={t("languages.route", {
+        from: languageName(from, t),
+        to: languageName(to, t),
+      })}
     >
       <span className="ld-route__chip">{from.toUpperCase()}</span>
       <span className="ld-route__path">

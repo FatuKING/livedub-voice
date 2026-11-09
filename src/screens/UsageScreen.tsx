@@ -1,26 +1,34 @@
 import { ChartColumn } from "lucide-react";
 import Card from "../components/Card";
 import PageHeader from "../components/PageHeader";
+import { useI18n } from "../i18n/context";
+import { PRICE_PER_MINUTE_USD } from "../lib/pricing";
 import "./screens.css";
 
 /** Usage placeholder until local metering exists. */
 function UsageScreen() {
+  const { t, rich, format } = useI18n();
   return (
     <>
       <PageHeader
-        title="Usage"
-        description="Minutes translated and estimated cost, per session and over time."
+        title={t("usage.title")}
+        description={t("usage.description")}
       />
       <Card className="ld-empty">
         <span className="ld-empty__icon" aria-hidden="true">
           <ChartColumn size={24} />
         </span>
-        <h2 className="ld-empty__title">No usage yet</h2>
+        <h2 className="ld-empty__title">{t("usage.emptyTitle")}</h2>
         <p className="ld-empty__text">
-          Once you start translating, the minutes for each direction and their
-          estimated cost show up here. They are counted on this computer at{" "}
-          <span className="mono">$0.034</span> per audio minute; LiveDub Voice
-          does not read your OpenAI billing.
+          {rich("usage.emptyText", {
+            price: (
+              <span className="mono">
+                {format.currency(PRICE_PER_MINUTE_USD, {
+                  maximumFractionDigits: 3,
+                })}
+              </span>
+            ),
+          })}
         </p>
       </Card>
     </>

@@ -35,6 +35,9 @@ export function getAppInfo(): Promise<AppInfo> {
   return invoke<AppInfo>("app_info");
 }
 
+/** Panel language setting: follow the OS, or a fixed language. */
+export type UiLanguage = "system" | "en" | "es";
+
 /** Language supported by the translator. */
 export type Language = "es" | "en";
 
@@ -76,6 +79,8 @@ export interface OutgoingSettings {
 export interface Settings {
   /** File format version, for future migrations. */
   version: number;
+  /** Language of the panel itself; `"system"` follows the Windows display language. */
+  uiLanguage: UiLanguage;
   incoming: IncomingSettings;
   outgoing: OutgoingSettings;
 }

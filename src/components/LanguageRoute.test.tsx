@@ -1,6 +1,7 @@
-import { render, screen } from "@testing-library/react";
+import { screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import LanguageRoute from "./LanguageRoute";
+import { render } from "../test/i18n";
 
 describe("LanguageRoute", () => {
   it("shows both language chips in route order", () => {

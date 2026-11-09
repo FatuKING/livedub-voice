@@ -1,16 +1,23 @@
+import type { Translate } from "../i18n/translate";
 import type { Language } from "./api";
 
-/** Human-readable name of each supported language. */
-export const LANGUAGE_NAMES: Record<Language, string> = {
-  en: "English",
-  es: "Spanish",
-};
+/** Translator languages, in picker order. */
+const LANGUAGES: readonly Language[] = ["es", "en"];
+
+/** Name of a translator language for use inside a sentence ("Hear others in Spanish"). */
+export function languageName(language: Language, t: Translate): string {
+  return t(`languages.name.${language}`);
+}
 
 /** Languages offered in pickers, in display order. */
-export const LANGUAGE_OPTIONS: { value: Language; label: string }[] = [
-  { value: "es", label: LANGUAGE_NAMES.es },
-  { value: "en", label: LANGUAGE_NAMES.en },
-];
+export function languageOptions(
+  t: Translate,
+): { value: Language; label: string }[] {
+  return LANGUAGES.map((value) => ({
+    value,
+    label: t(`languages.option.${value}`),
+  }));
+}
 
 /**
  * The language a direction translates from, given the language it translates into.

@@ -4,8 +4,9 @@ import Button from "./components/Button";
 import LevelMeter from "./components/LevelMeter";
 import Notice from "./components/Notice";
 import Toggle from "./components/Toggle";
+import { useT } from "./i18n/context";
+import { translateError } from "./i18n/errors";
 import {
-  isAppError,
   onMonitorLevel,
   onMonitorStopped,
   startMonitor,
@@ -32,7 +33,13 @@ function MicTest({ inputId, outputId }: MicTestProps) {
   const [active, setActive] = useState(false);
   const [listen, setListen] = useState(false);
   const [level, setLevel] = useState<InputLevel>(SILENCE);
-  const [error, setError] = useState<string | null>(null);
+  const t = useT();
+  /** Why the test ended: a failed start, or the core's message when it stopped on its own. */
+  const [error, setError] = useState<
+    | { kind: "failed"; reason: unknown }
+    | { kind: "stopped"; detail: string }
+    | null
+  >(null);
 
   // Start/stop calls run one after another so a quick stop never overtakes a slow start.
   const queue = useRef<Promise<unknown>>(Promise.resolve());
@@ -46,8 +53,8 @@ function MicTest({ inputId, outputId }: MicTestProps) {
     if (!active) return;
     const subscriptions = [
       onMonitorLevel(setLevel),
-      onMonitorStopped((message) => {
-        setError(message);
+      onMonitorStopped((detail) => {
+        setError({ kind: "stopped", detail });
         setActive(false);
       }),
     ];
@@ -66,7 +73,7 @@ function MicTest({ inputId, outputId }: MicTestProps) {
     enqueue(() => startMonitor(inputId, outputId, listen)).catch(
       (reason: unknown) => {
         if (!current) return;
-        setError(isAppError(reason) ? reason.message : String(reason));
+        setError({ kind: "failed", reason });
         setActive(false);
       },
     );
@@ -81,9 +88,13 @@ function MicTest({ inputId, outputId }: MicTestProps) {
   }
 
   return (
-    <div className="ld-mic-test" role="group" aria-label="Microphone test">
+    <div
+      className="ld-mic-test"
+      role="group"
+      aria-label={t("micTest.groupLabel")}
+    >
       <div className="ld-mic-test__header">
-        <span className="ld-mic-test__title">Test microphone</span>
+        <span className="ld-mic-test__title">{t("micTest.title")}</span>
         <Button
           variant={active ? "secondary" : "outgoing"}
           icon={
@@ -95,26 +106,32 @@ function MicTest({ inputId, outputId }: MicTestProps) {
           }
           onClick={toggleTest}
         >
-          {active ? "Stop test" : "Start test"}
+          {active ? t("micTest.stop") : t("micTest.start")}
         </Button>
       </div>
       <LevelMeter
         direction="outgoing"
-        label="Microphone level"
+        label={t("micTest.level")}
         level={level.rms}
         peak={level.peak}
       />
       <Toggle
         direction="outgoing"
-        label="Listen to myself"
-        hint="Plays your microphone on your headphones (Incoming → Headphones). Wear headphones to avoid feedback."
+        label={t("micTest.listen")}
+        hint={t("micTest.listenHint")}
         checked={listen}
         onChange={(checked) => {
           setError(null);
           setListen(checked);
         }}
       />
-      {error && <Notice tone="error">{error}</Notice>}
+      {error && (
+        <Notice tone="error">
+          {error.kind === "failed"
+            ? translateError(error.reason, t)
+            : t("micTest.stopped", { detail: error.detail })}
+        </Notice>
+      )}
     </div>
   );
 }
