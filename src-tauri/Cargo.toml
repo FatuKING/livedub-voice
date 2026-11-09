@@ -31,8 +31,13 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 keyring = { version = "3", features = ["windows-native"] }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-native-roots"] }
 zeroize = "1"
+tokio-tungstenite = { version = "0.30", default-features = false, features = ["connect", "rustls-tls-native-roots"] }
+tokio = { version = "1", features = ["rt", "macros", "sync", "time", "net"] }
+futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
+base64 = "0.22"
 
 [dev-dependencies]
+hound = "3.5"
 tempfile = "3"
 tokio = { version = "1", features = ["macros", "rt"] }
 

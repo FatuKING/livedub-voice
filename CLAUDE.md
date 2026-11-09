@@ -45,8 +45,12 @@ Out of scope for v1: macOS/Linux, other languages, voice selection, other AI pro
 
 - **Model:** `gpt-realtime-translate` — WebSocket `wss://api.openai.com/v1/realtime/translations?model=gpt-realtime-translate`.
   - Target language set via `session.audio.output.language` (`"es"` / `"en"`); source language is auto-detected.
-  - Input: PCM16 mono 24 kHz, base64, via `session.input_audio_buffer.append` (send silence too).
-  - Output: PCM16 in 200 ms chunks via `session.output_audio.delta`, plus transcript deltas.
+  - Auth: `Authorization: Bearer <key>` on the WebSocket handshake. A wrong key does not fail the handshake: the server sends an `error` event with code `invalid_api_key`.
+  - Input: PCM16 mono 24 kHz little-endian, base64, via `session.input_audio_buffer.append` (send silence too). Append in 200 ms chunks (4800 samples); shorter chunks are buffered, longer ones split.
+  - Output: base64 PCM16 24 kHz mono via `session.output_audio.delta` (chunk length varies), translated text via `session.output_transcript.delta`.
+  - Source-language captions (`session.input_transcript.delta`) only arrive when `session.audio.input.transcription` is set (model `gpt-realtime-whisper`).
+  - Graceful end: send `session.close`, keep reading until `session.closed`, then close the socket.
+  - Docs: [guide](https://developers.openai.com/api/docs/guides/realtime-translation), [client events](https://developers.openai.com/api/reference/resources/realtime/translation-client-events), [server events](https://developers.openai.com/api/reference/resources/realtime/translation-server-events).
   - No voice selection (voice adapts to the speaker), no custom prompts/glossaries, no turn lifecycle.
   - Speech already in the target language may produce silence → keep original audio mixed in (ducked).
   - Price: **$0.034 per audio minute** (both directions active ≈ $4/hour).
