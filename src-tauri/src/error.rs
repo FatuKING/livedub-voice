@@ -2,6 +2,8 @@
 
 use serde::ser::{Serialize, SerializeStruct, Serializer};
 
+use crate::translator::TranslatorError;
+
 /// Errors returned by the core.
 ///
 /// Commands return [`AppResult`], and errors reach the panel serialized as
@@ -32,6 +34,11 @@ pub enum AppError {
     #[error("credential store error: {0}")]
     CredentialStore(String),
 
+    /// The OpenAI translation session failed (auth, model access, rate limit, network,
+    /// protocol). The code comes from [`TranslatorError::code`].
+    #[error(transparent)]
+    Translator(#[from] TranslatorError),
+
     /// An unexpected internal failure that the user cannot act on.
     #[error("internal error: {0}")]
     Internal(String),
@@ -46,6 +53,7 @@ impl AppError {
             Self::InvalidApiKey(_) => "invalid_api_key",
             Self::NoApiKey => "no_api_key",
             Self::CredentialStore(_) => "credential_store",
+            Self::Translator(error) => error.code(),
             Self::Internal(_) => "internal",
         }
     }
@@ -101,6 +109,18 @@ mod tests {
         assert_eq!(
             serde_json::to_value(AppError::CredentialStore("denied".into())).unwrap(),
             json!({ "code": "credential_store", "message": "credential store error: denied" })
+        );
+    }
+
+    #[test]
+    fn translator_errors_serialize_with_their_own_code() {
+        assert_eq!(
+            serde_json::to_value(AppError::from(TranslatorError::Auth)).unwrap(),
+            json!({ "code": "openai_auth", "message": "OpenAI rejected the API key" })
+        );
+        assert_eq!(
+            serde_json::to_value(AppError::from(TranslatorError::RateLimited)).unwrap()["code"],
+            json!("openai_rate_limited")
         );
     }
 
