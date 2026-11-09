@@ -1,0 +1,71 @@
+/* Boarding-pass card: rounded, hairline border, optional direction stripe and perforation. */
+.ld-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-width: 0;
+  margin: 0;
+  padding: var(--space-5);
+  background: var(--color-surface);
+  border: var(--border-hairline);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+}
+
+.ld-card--incoming {
+  border-top: 3px solid var(--color-incoming);
+}
+
+.ld-card--outgoing {
+  border-top: 3px solid var(--color-outgoing);
+}
+
+.ld-card__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.ld-card__eyebrow {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+
+.ld-card__title {
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-bold);
+}
+
+/* Perforated divider: dashed tear line with two notches cut into the card edges. */
+.ld-perforation {
+  position: relative;
+  height: 0;
+  margin: var(--space-1) calc(-1 * var(--space-5));
+  border-top: 2px dashed var(--color-border);
+}
+
+.ld-perforation::before,
+.ld-perforation::after {
+  content: "";
+  position: absolute;
+  top: -9px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--color-bg);
+}
+
+.ld-perforation::before {
+  left: -8px;
+  box-shadow: inset -1px 0 0 var(--color-border);
+}
+
+.ld-perforation::after {
+  right: -8px;
+  box-shadow: inset 1px 0 0 var(--color-border);
+}

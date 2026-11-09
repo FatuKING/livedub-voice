@@ -1,0 +1,75 @@
+/* Route card body: boarding-pass style label/value pairs. */
+.ld-pass {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3);
+  margin: 0;
+}
+
+.ld-pass__item {
+  min-width: 0;
+}
+
+.ld-pass dt {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+
+.ld-pass dd {
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: var(--font-weight-semibold);
+}
+
+.ld-route-card__actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+}
+
+.ld-route-card__note {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+}
+
+/* Empty states. */
+.ld-empty {
+  align-items: center;
+  padding: var(--space-10) var(--space-6);
+  text-align: center;
+}
+
+.ld-empty__icon {
+  display: inline-flex;
+  padding: var(--space-3);
+  border-radius: 50%;
+  background: var(--color-sun-soft);
+  color: var(--color-sun-text);
+}
+
+.ld-empty__title {
+  font-size: var(--font-size-lg);
+}
+
+.ld-empty__text {
+  max-width: 48ch;
+  color: var(--color-text-muted);
+}
+
+.ld-route-card__buttons {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+/* Push the actions to the bottom so both route cards line up. */
+.ld-route-grid--stretch .ld-route-card__actions {
+  margin-top: auto;
+}

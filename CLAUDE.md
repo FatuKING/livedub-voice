@@ -60,7 +60,7 @@ Out of scope for v1: macOS/Linux, other languages, voice selection, other AI pro
 - **App shell:** Tauri 2.
 - **Core (audio + OpenAI client):** Rust — `tokio`, `tokio-tungstenite`, `wasapi` (WASAPI bindings), `rubato` (resampling), `keyring` (Credential Manager), `serde`/`serde_json` (settings and usage history). _Proposed crates; confirm when implementing._
 - **Persistence:** no database. Settings and usage history are plain JSON files in Tauri's app config dir (`%APPDATA%\io.github.fatuking.livedubvoice`, e.g. `settings.json`); the API key lives only in Credential Manager.
-- **Panel (frontend):** React + TypeScript + Vite.
+- **Panel (frontend):** React + TypeScript + Vite. Plain CSS with design tokens (no UI framework, Tailwind or CSS-in-JS); Plus Jakarta Sans bundled via `@fontsource-variable`, icons from `lucide-react`. Nothing loaded from a CDN.
 - **Testing:** `cargo test` for the core, Vitest for the panel.
 - **CI/CD:** GitHub Actions on `windows-latest` (fmt, clippy, tests, build, release installer).
 
@@ -75,6 +75,13 @@ Out of scope for v1: macOS/Linux, other languages, voice selection, other AI pro
 
 - Each direction is an independent pipeline with its own OpenAI WebSocket session.
 - The panel never touches audio or the API key directly; it talks to the core via Tauri commands/events.
+
+## UI design
+
+- The panel uses the **Ruta** design system, documented in [`docs/design.md`](docs/design.md). Read it before touching panel UI.
+- All panel UI uses the Ruta tokens (`src/styles/tokens.css`) and components (`src/components/`); no hard-coded colors or one-off styles in screens.
+- Color meanings are fixed: **incoming (others → you) = teal**, **outgoing (you → others) = coral**, sun/amber = warnings and highlights, red = errors.
+- Dark and light themes follow the OS; text must meet WCAG AA in both.
 
 ## Conventions
 

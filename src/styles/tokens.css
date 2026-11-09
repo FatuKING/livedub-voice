@@ -1,0 +1,155 @@
+/*
+ * Ruta design tokens — the single source of truth for the panel's look.
+ *
+ * Colors carry meaning: incoming (others → you) = teal, outgoing (you → others) = coral,
+ * sun = warnings and highlights, danger = errors. See docs/design.md before adding tokens.
+ *
+ * Theme: follows `prefers-color-scheme`; `data-theme="light" | "dark"` on <html> overrides it.
+ */
+
+:root {
+  /* Typography */
+  --font-sans:
+    "Plus Jakarta Sans Variable", "Segoe UI", system-ui, -apple-system,
+    sans-serif;
+  --font-mono:
+    "Cascadia Mono", "Cascadia Code", Consolas, ui-monospace, "SF Mono",
+    monospace;
+
+  --font-size-xs: 0.75rem; /* 12px */
+  --font-size-sm: 0.8125rem; /* 13px */
+  --font-size-md: 0.875rem; /* 14px — body */
+  --font-size-lg: 1rem; /* 16px */
+  --font-size-xl: 1.25rem; /* 20px */
+  --font-size-2xl: 1.5rem; /* 24px — page titles */
+
+  --font-weight-regular: 400;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
+  --font-weight-bold: 700;
+
+  --line-height-tight: 1.25;
+  --line-height-normal: 1.5;
+
+  /* Spacing (4px grid) */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.25rem;
+  --space-6: 1.5rem;
+  --space-8: 2rem;
+  --space-10: 2.5rem;
+
+  /* Radius */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-pill: 999px;
+
+  /* Borders and focus */
+  --border-hairline: 1px solid var(--color-border);
+  --focus-ring: 0 0 0 2px var(--color-bg), 0 0 0 4px var(--color-focus);
+
+  /* Elevation: kept minimal on purpose */
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.08);
+
+  /* Motion */
+  --duration-fast: 120ms;
+  --duration-normal: 200ms;
+  --easing-standard: cubic-bezier(0.2, 0, 0, 1);
+
+  /* Layout */
+  --sidebar-width: 208px;
+  --content-max-width: 960px;
+}
+
+/* Dark theme (default when the OS prefers dark, or forced with data-theme="dark"). */
+:root,
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --color-bg: #0b1a2a;
+  --color-surface: #12263a;
+  --color-surface-raised: #1a3350;
+  --color-border: #24405f;
+  --color-border-strong: #5b7896;
+  --color-text: #eaf2f7;
+  --color-text-muted: #8fa6ba;
+
+  --color-incoming: #2ec4b6;
+  --color-on-incoming: #04342c;
+  --color-incoming-soft: rgb(46 196 182 / 0.14);
+  --color-outgoing: #ff7a59;
+  --color-on-outgoing: #4a1b0c;
+  --color-outgoing-soft: rgb(255 122 89 / 0.14);
+
+  --color-sun: #ffc857;
+  --color-sun-text: #ffc857;
+  --color-sun-soft: rgb(255 200 87 / 0.14);
+  --color-danger: #f25f82;
+  --color-danger-soft: rgb(242 95 130 / 0.14);
+
+  --color-focus: #ffc857;
+}
+
+/* Light theme ("sand/paper"). */
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    color-scheme: light;
+    --color-bg: #f7f3ec;
+    --color-surface: #ffffff;
+    --color-surface-raised: #efe8db;
+    --color-border: #e4dccd;
+    --color-border-strong: #8c7f6a;
+    --color-text: #12263a;
+    --color-text-muted: #5b6b7a;
+
+    --color-incoming: #0a6f67;
+    --color-on-incoming: #ffffff;
+    --color-incoming-soft: rgb(10 111 103 / 0.1);
+    --color-outgoing: #b23f24;
+    --color-on-outgoing: #ffffff;
+    --color-outgoing-soft: rgb(178 63 36 / 0.1);
+
+    --color-sun: #b7791f;
+    --color-sun-text: #8c5a00;
+    --color-sun-soft: rgb(183 121 31 / 0.12);
+    --color-danger: #c81e4a;
+    --color-danger-soft: rgb(200 30 74 / 0.08);
+
+    --color-focus: #0a6f67;
+  }
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --color-bg: #f7f3ec;
+  --color-surface: #ffffff;
+  --color-surface-raised: #efe8db;
+  --color-border: #e4dccd;
+  --color-border-strong: #8c7f6a;
+  --color-text: #12263a;
+  --color-text-muted: #5b6b7a;
+
+  --color-incoming: #0a6f67;
+  --color-on-incoming: #ffffff;
+  --color-incoming-soft: rgb(10 111 103 / 0.1);
+  --color-outgoing: #b23f24;
+  --color-on-outgoing: #ffffff;
+  --color-outgoing-soft: rgb(178 63 36 / 0.1);
+
+  --color-sun: #b7791f;
+  --color-sun-text: #8c5a00;
+  --color-sun-soft: rgb(183 121 31 / 0.12);
+  --color-danger: #c81e4a;
+  --color-danger-soft: rgb(200 30 74 / 0.08);
+
+  --color-focus: #0a6f67;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --duration-fast: 0ms;
+    --duration-normal: 0ms;
+  }
+}
