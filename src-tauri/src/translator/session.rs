@@ -27,9 +27,10 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 /// How long to wait for `session.closed` after sending `session.close`.
 const CLOSE_TIMEOUT: Duration = Duration::from_secs(15);
 
-/// Queued audio chunks before [`AudioSender::try_send`] reports the queue as full (~6 s of 200 ms
-/// chunks).
-const AUDIO_QUEUE: usize = 32;
+/// Queued audio chunks before [`AudioSender::try_send`] reports the queue as full (800 ms of
+/// 200 ms chunks). Kept short so a stalled socket shows up quickly as backpressure; the live
+/// input queue in front of it then drops the oldest audio instead of adding delay.
+const AUDIO_QUEUE: usize = 4;
 
 /// Queued outputs before the socket stops being read until the consumer catches up.
 const OUTPUT_QUEUE: usize = 256;
@@ -321,14 +322,14 @@ async fn wait_until(deadline: Option<Instant>) {
     }
 }
 
-enum Step {
+pub(super) enum Step {
     Output(TranslatorOutput),
     Closed,
     Skip,
 }
 
 /// Turns a server text message into what the session does next.
-fn handle_event(text: &str) -> Step {
+pub(super) fn handle_event(text: &str) -> Step {
     let event = match parse_server_event(text) {
         Ok(event) => event,
         Err(error) => {

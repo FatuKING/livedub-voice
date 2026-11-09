@@ -5,6 +5,13 @@
 //! transcript deltas come out as [`TranslatorOutput`]s. Each pipeline direction owns its own
 //! session.
 //!
+//! On top of it, [`Translator`] is the provider-agnostic interface the pipelines use: it starts a
+//! [`LiveSession`] that takes PCM16 mono 24 kHz audio of any length through an [`AudioInput`]
+//! (cut into 200 ms appends, silence included, dropping the oldest audio if the provider stalls).
+//! [`OpenAiTranslator`] is the real provider; [`FakeTranslator`] replays a recorded session or
+//! echoes the input, for development without an API key (`LIVEDUB_FAKE_TRANSLATOR=1`). On the
+//! playback side, [`JitterBuffer`] smooths out the irregular output deltas.
+//!
 //! Guide: <https://developers.openai.com/api/docs/guides/realtime-translation>
 //!
 //! The API key only travels in the `Authorization` header of the WebSocket handshake. It is never
@@ -12,9 +19,17 @@
 //! looks like a key removed).
 
 pub mod events;
+pub mod fake;
+pub mod jitter;
+pub mod live;
+mod openai;
 pub mod pcm;
 mod session;
 
+pub use fake::{FAKE_TRANSLATOR_ENV, FakeMode, FakeTranslator};
+pub use jitter::JitterBuffer;
+pub use live::{AudioInput, LiveSession, Translator};
+pub use openai::OpenAiTranslator;
 pub use session::{AudioSender, TranslatorOutput, TranslatorSession, connect, connect_to};
 
 /// Translations WebSocket endpoint.
