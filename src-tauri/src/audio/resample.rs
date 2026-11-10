@@ -36,6 +36,11 @@ use crate::translator::pcm::SAMPLE_RATE as TRANSLATOR_RATE;
 /// Largest relative change [`FromTranslator::set_rate_adjust`] accepts in either direction.
 pub const MAX_RATE_ADJUST: f64 = 0.02;
 
+/// Largest speed-up [`FromTranslator::set_rate_adjust`] accepts (factor down to `1 - MAX_CATCH_UP`),
+/// to drain a large backlog of translated speech. About a semitone at most; only used when
+/// seconds of audio are waiting.
+pub const MAX_CATCH_UP: f64 = 0.06;
+
 /// Processing block, in milliseconds of input audio.
 const BLOCK_MS: usize = 10;
 
@@ -76,7 +81,7 @@ impl MonoResampler {
                 .interpolation(SincInterpolationType::Linear);
         let resampler = Async::<f32>::new_sinc(
             ratio,
-            1.0 + MAX_RATE_ADJUST * 2.0,
+            1.0 + MAX_CATCH_UP * 2.0,
             &parameters,
             block_len,
             1,
@@ -145,8 +150,8 @@ impl MonoResampler {
         }
     }
 
-    fn set_rate_adjust(&mut self, factor: f64) -> f64 {
-        let factor = factor.clamp(1.0 - MAX_RATE_ADJUST, 1.0 + MAX_RATE_ADJUST);
+    fn set_rate_adjust(&mut self, factor: f64, min: f64, max: f64) -> f64 {
+        let factor = factor.clamp(min, max);
         if let Err(error) = self
             .resampler
             .set_resample_ratio(self.base_ratio * factor, true)
@@ -233,7 +238,8 @@ impl ToTranslator {
     /// Drift hook: scales the output rate by `factor` (clamped to 1 ± [`MAX_RATE_ADJUST`]),
     /// ramped over the next block. Returns the factor applied.
     pub fn set_rate_adjust(&mut self, factor: f64) -> f64 {
-        self.resampler.set_rate_adjust(factor)
+        self.resampler
+            .set_rate_adjust(factor, 1.0 - MAX_RATE_ADJUST, 1.0 + MAX_RATE_ADJUST)
     }
 
     /// The rate factor currently applied (1.0 when not adjusted).
@@ -284,11 +290,13 @@ impl FromTranslator {
         self.resampler.flush(|block| upmix(block, channels, out));
     }
 
-    /// Drift hook: scales the output rate by `factor` (clamped to 1 ± [`MAX_RATE_ADJUST`]),
-    /// ramped over the next block. Above 1.0 produces more device frames per translator sample
-    /// (use it when the playback buffer runs low), below 1.0 fewer. Returns the factor applied.
+    /// Drift hook: scales the output rate by `factor` (clamped to `1 - MAX_CATCH_UP` ..
+    /// `1 + MAX_RATE_ADJUST`), ramped over the next block. Above 1.0 produces more device frames
+    /// per translator sample (use it when the playback buffer runs low), below 1.0 fewer (plays
+    /// faster, draining a backlog). Returns the factor applied.
     pub fn set_rate_adjust(&mut self, factor: f64) -> f64 {
-        self.resampler.set_rate_adjust(factor)
+        self.resampler
+            .set_rate_adjust(factor, 1.0 - MAX_CATCH_UP, 1.0 + MAX_RATE_ADJUST)
     }
 
     /// The rate factor currently applied (1.0 when not adjusted).
@@ -472,7 +480,7 @@ mod tests {
         let mut converter = FromTranslator::new(48_000, 1).unwrap();
         assert!((converter.rate_adjust() - 1.0).abs() < 1e-9);
         assert!((converter.set_rate_adjust(1.5) - (1.0 + MAX_RATE_ADJUST)).abs() < 1e-9);
-        assert!((converter.set_rate_adjust(0.1) - (1.0 - MAX_RATE_ADJUST)).abs() < 1e-9);
+        assert!((converter.set_rate_adjust(0.1) - (1.0 - MAX_CATCH_UP)).abs() < 1e-9);
 
         let pcm = vec![1000i16; 24_000];
         let mut normal = FromTranslator::new(48_000, 1).unwrap();

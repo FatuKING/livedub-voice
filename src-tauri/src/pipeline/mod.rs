@@ -11,7 +11,9 @@
 //! events). Audio devices are reached through [`AudioIo`], so the pipelines can be tested with
 //! in-memory sources and sinks instead of real hardware.
 
+pub mod latency;
 pub mod outgoing;
+pub mod recorder;
 
 use serde::Serialize;
 
@@ -32,6 +34,9 @@ pub enum PipelineState {
     Connecting,
     /// Translating.
     Live,
+    /// Stop requested: finishing the translation of what was already said (the tail of the last
+    /// sentence) before releasing the devices.
+    Stopping,
     /// Stopped because of an error (see [`PipelineStatus::error`]).
     Error,
 }
@@ -74,6 +79,13 @@ impl PipelineStatus {
     pub fn live() -> Self {
         Self {
             state: PipelineState::Live,
+            error: None,
+        }
+    }
+
+    pub fn stopping() -> Self {
+        Self {
+            state: PipelineState::Stopping,
             error: None,
         }
     }

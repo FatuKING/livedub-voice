@@ -237,7 +237,8 @@ export function onMonitorStopped(
 }
 
 /** What a translation pipeline is doing. Mirrors `PipelineState` in `src-tauri/src/pipeline/mod.rs`. */
-export type PipelineState = "idle" | "connecting" | "live" | "error";
+export type PipelineState =
+  "idle" | "connecting" | "live" | "stopping" | "error";
 
 /** A pipeline's state, and the error that stopped it (only with `"error"`). */
 export interface PipelineStatus {

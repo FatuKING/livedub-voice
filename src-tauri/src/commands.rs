@@ -281,8 +281,10 @@ pub async fn start_outgoing(
 /// Stops the outgoing translation, if it is running, and waits until it has stopped.
 #[tauri::command]
 pub async fn stop_outgoing(state: State<'_, OutgoingState>) -> AppResult<()> {
-    let pipeline = state.pipeline.lock().await.take();
-    if let Some(pipeline) = pipeline {
+    // Keep the slot locked while it stops (up to ~10 s finishing the last sentence), so a start
+    // cannot open the devices before they are released.
+    let mut slot = state.pipeline.lock().await;
+    if let Some(pipeline) = slot.take() {
         pipeline.stop().await;
     }
     Ok(())

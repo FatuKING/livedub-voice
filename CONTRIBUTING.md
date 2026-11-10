@@ -52,6 +52,25 @@ In PowerShell: `$env:LIVEDUB_FAKE_TRANSLATOR = "echo"; pnpm tauri dev`. The reco
 
 To test translation end to end you need your own OpenAI API key and a virtual audio cable such as [VB-CABLE](https://vb-audio.com/Cable/). See the requirements in the [README](README.md#requirements).
 
+### Troubleshooting audio quality
+
+Every outgoing session logs a summary when it stops (`outgoing session summary`, `outgoing latency`, `outgoing microphone summary`): jitter underruns and dropped samples, the largest backlog of translated audio, how many output deltas arrived, the audio sent and received, the latency per utterance (min / median / max) and the microphone's peak, RMS and clipping, with warnings for a clipping or too quiet microphone, a silent channel or channels that cancel out. Logs live in `%LOCALAPPDATA%\io.github.fatuking.livedubvoice\logs`. Use `RUST_LOG=livedub_voice_lib=debug` for one line per utterance.
+
+For a closer look, set `LIVEDUB_RECORD_DIR` to a folder before starting the app. Each outgoing session then writes a subfolder `outgoing-<unix seconds>` with:
+
+| File           | Contents                                                                                                                                                       |
+| -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `sent.wav`     | The microphone audio actually sent to the translator (PCM16 mono 24 kHz, silence included)                                                                     |
+| `received.wav` | The translated audio as received, on a wall-clock timeline: gaps between deltas are silence, so late deltas are audible                                        |
+| `cable.wav`    | What was written to the virtual cable, in the cable's format                                                                                                   |
+| `events.jsonl` | Timestamped events: each 200 ms block sent (RMS/peak), each output delta, transcript deltas, speech start/end, latency, jitter stats every second, the summary |
+
+```powershell
+$env:LIVEDUB_RECORD_DIR = "$HOME\livedub-recordings"; pnpm tauri dev
+```
+
+This is a **local-only debugging tool**, off by default: nothing is uploaded, but the files contain your voice and the transcript of what you said, so only share them with people you trust and delete them when you are done.
+
 ## Branches
 
 Create a branch from `main` for each change, named `<type>/<short-slug>`, where `<type>` is the same Conventional Commits type the PR will use:

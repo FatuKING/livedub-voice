@@ -50,6 +50,8 @@ Out of scope for v1: macOS/Linux, other languages, voice selection, other AI pro
   - Output: base64 PCM16 24 kHz mono via `session.output_audio.delta` (chunk length varies), translated text via `session.output_transcript.delta`.
   - Source-language captions (`session.input_transcript.delta`) only arrive when `session.audio.input.transcription` is set (model `gpt-realtime-whisper`).
   - Graceful end: send `session.close`, keep reading until `session.closed`, then close the socket.
+  - Input noise reduction: `session.audio.input.noise_reduction` (`near_field` / `far_field`); the app sends `near_field`.
+  - On stop the app sends ~1.5 s of trailing silence before `session.close` and plays the translated tail before releasing the cable (state `stopping`, capped at 10 s).
   - Docs: [guide](https://developers.openai.com/api/docs/guides/realtime-translation), [client events](https://developers.openai.com/api/reference/resources/realtime/translation-client-events), [server events](https://developers.openai.com/api/reference/resources/realtime/translation-server-events).
   - No voice selection (voice adapts to the speaker), no custom prompts/glossaries, no turn lifecycle.
   - Speech already in the target language may produce silence → keep original audio mixed in (ducked).
@@ -65,7 +67,7 @@ Out of scope for v1: macOS/Linux, other languages, voice selection, other AI pro
 - **Core (audio + OpenAI client):** Rust — `tokio`, `tokio-tungstenite`, `wasapi` (WASAPI bindings), `rubato` (resampling), `keyring` 3 with the `windows-native` backend (Credential Manager), `reqwest` 0.12 with rustls and the Windows root store (`rustls-tls-native-roots`, no OpenSSL) as the HTTP client, `serde`/`serde_json` (settings and usage history). _Crates not yet in `Cargo.toml` are proposals; confirm when implementing._
 - **Persistence:** no database. Settings and usage history are plain JSON files in Tauri's app config dir (`%APPDATA%\io.github.fatuking.livedubvoice`, e.g. `settings.json`); the API key lives only in Credential Manager.
 - **Panel (frontend):** React + TypeScript + Vite. Plain CSS with design tokens (no UI framework, Tailwind or CSS-in-JS); Plus Jakarta Sans bundled via `@fontsource-variable`, icons from `lucide-react`. Nothing loaded from a CDN.
-- **Testing:** `cargo test` for the core, Vitest for the panel. `LIVEDUB_FAKE_TRANSLATOR=1` (replay) or `=echo` swaps OpenAI for a free local fake translator.
+- **Testing:** `cargo test` for the core, Vitest for the panel. `LIVEDUB_FAKE_TRANSLATOR=1` (replay) or `=echo` swaps OpenAI for a free local fake translator. `LIVEDUB_RECORD_DIR=<folder>` records each session (WAVs + events) locally for diagnosing audio quality.
 - **CI/CD:** GitHub Actions on `windows-latest` (fmt, clippy, tests, build, release installer).
 
 ## Architecture
