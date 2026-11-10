@@ -126,6 +126,36 @@ describe("OutgoingControls", () => {
     expect(screen.getByText("Hello everyone,")).toBeInTheDocument();
   });
 
+  it("shows that it is finishing the translation while it stops", async () => {
+    currentStatus = { state: "live", error: null };
+    let resolveStop: () => void = () => {};
+    invokeMock.mockImplementation((command) => {
+      if (command === "get_outgoing_status")
+        return Promise.resolve(currentStatus);
+      if (command === "stop_outgoing")
+        return new Promise<void>((resolve) => (resolveStop = resolve));
+      return Promise.resolve(undefined);
+    });
+    renderControls();
+    await screen.findByText("Live");
+
+    fireEvent.click(screen.getByRole("button", { name: "Stop outgoing" }));
+    expect(screen.getByText("Finishing translation…")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Stop outgoing" }),
+    ).toBeDisabled();
+
+    emitStatus({ state: "stopping", error: null });
+    expect(
+      screen.getByRole("button", { name: "Stop outgoing" }),
+    ).toBeDisabled();
+
+    emitStatus({ state: "idle", error: null });
+    act(() => resolveStop());
+    await screen.findByRole("button", { name: "Start outgoing" });
+    expect(screen.getByText("Off")).toBeInTheDocument();
+  });
+
   it("stops and returns to idle", async () => {
     currentStatus = { state: "live", error: null };
     renderControls();

@@ -39,6 +39,9 @@ impl ClientEvent {
             session: SessionConfig {
                 audio: AudioConfig {
                     input: Some(InputAudioConfig {
+                        noise_reduction: Some(NoiseReduction {
+                            kind: NoiseReductionType::NearField,
+                        }),
                         transcription: Some(TranscriptionConfig {
                             model: INPUT_TRANSCRIPTION_MODEL.to_owned(),
                         }),
@@ -74,9 +77,30 @@ pub struct AudioConfig {
 /// `session.audio.input`.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct InputAudioConfig {
+    /// Server-side noise reduction applied before translation. Helps the model segment speech
+    /// when the microphone picks up background noise.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub noise_reduction: Option<NoiseReduction>,
     /// Enables `session.input_transcript.delta` events. Translation runs from the audio either way.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub transcription: Option<TranscriptionConfig>,
+}
+
+/// `session.audio.input.noise_reduction`.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct NoiseReduction {
+    #[serde(rename = "type")]
+    pub kind: NoiseReductionType,
+}
+
+/// Microphone kind the noise reduction is tuned for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NoiseReductionType {
+    /// Close-talking microphones (headsets): the common case for calls and games.
+    NearField,
+    /// Laptop or room microphones.
+    FarField,
 }
 
 /// `session.audio.input.transcription`.
@@ -202,7 +226,10 @@ mod tests {
                 "type": "session.update",
                 "session": {
                     "audio": {
-                        "input": { "transcription": { "model": "gpt-realtime-whisper" } },
+                        "input": {
+                            "noise_reduction": { "type": "near_field" },
+                            "transcription": { "model": "gpt-realtime-whisper" }
+                        },
                         "output": { "language": "es" }
                     }
                 }

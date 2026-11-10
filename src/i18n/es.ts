@@ -57,6 +57,7 @@ export const es: Messages = {
       idle: "Apagado",
       connecting: "Conectando…",
       live: "En vivo",
+      stopping: "Terminando la traducción…",
       error: "Error",
     },
     comingSoon: "Próximamente",

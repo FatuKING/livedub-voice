@@ -30,6 +30,7 @@ const TONES: Record<PipelineState, StatusTone> = {
   idle: "neutral",
   connecting: "sun",
   live: "outgoing",
+  stopping: "sun",
   error: "danger",
 };
 
@@ -92,12 +93,16 @@ function OutgoingControls({
     };
   }, []);
 
-  const running = status.state === "connecting" || status.state === "live";
+  const stopping = status.state === "stopping";
+  const running =
+    status.state === "connecting" || status.state === "live" || stopping;
 
   async function toggle() {
     setBusy(true);
     try {
       if (running) {
+        // The core finishes the last sentence first (up to ~10 s).
+        setStatus({ state: "stopping", error: null });
         await stopOutgoing();
         setStatus(IDLE);
       } else {
@@ -131,7 +136,7 @@ function OutgoingControls({
               <Play size={16} aria-hidden="true" />
             )
           }
-          disabled={busy || startBlocked}
+          disabled={busy || stopping || startBlocked}
           aria-describedby={startBlocked ? noteId : undefined}
           onClick={() => void toggle()}
         >

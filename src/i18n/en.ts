@@ -61,6 +61,7 @@ export const en = {
       idle: "Off",
       connecting: "Connecting…",
       live: "Live",
+      stopping: "Finishing translation…",
       error: "Error",
     },
     comingSoon: "Coming soon",

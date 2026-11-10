@@ -13,26 +13,45 @@
 //!   exactly the cable's clock, so no delay builds up between them. It also reports the input
 //!   level and the audio sent;
 //! - the **supervisor** task reads the translator's outputs into the jitter buffer, forwards the
-//!   captions, watches both devices, and on stop (or a fatal error) tears everything down in
-//!   order: microphone, translator (`session.close`, waiting for `session.closed`), pump, cable.
+//!   captions and watches both devices.
 //!
-//! Clock drift between the translator's 24 kHz and the cable shows up as the jitter buffer
-//! growing: when it holds more than its prebuffer, the output converter plays up to 2 % faster
-//! (see [`drift_adjust`]) so the backlog drains instead of adding latency.
+//! # Stopping
+//!
+//! A stop requested by the user is graceful, so the end of the last sentence is not lost: the
+//! state becomes `stopping`, the microphone is replaced by [`TRAILING_SILENCE`] of silence (the
+//! model needs it to finish the sentence), then `session.close` is sent and the outputs are read
+//! until `session.closed`, and finally the jitter buffer plays its tail into the cable. The
+//! whole sequence is capped at [`STOP_DRAIN_LIMIT`]. A fatal error (device gone, key rejected)
+//! tears down at once.
+//!
+//! # Drift and backlog
+//!
+//! The model often delivers translated speech faster than real time. The jitter buffer keeps all
+//! of it; the output converter then plays slightly faster (see [`drift_adjust`]): up to 2 % for
+//! a small backlog (clock drift), up to [`MAX_CATCH_UP`] (6 %) when seconds are waiting.
+//!
+//! # Diagnostics
+//!
+//! At stop a one-line summary is logged (jitter underruns, drops, max backlog, deltas, audio sent
+//! and received, latency per utterance, microphone health). With `LIVEDUB_RECORD_DIR` set, the
+//! session is also recorded to disk (see [`super::recorder`]).
 //!
 //! Audio contents are never logged; only levels, sizes and timings are.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::thread::JoinHandle as ThreadHandle;
 use std::time::{Duration, Instant};
 
+use serde_json::json;
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 
+use super::latency::{LatencyEvent, LatencyReport, LatencyTracker, SPEECH_RMS};
+use super::recorder::{InputHealth, SessionRecorder};
 use super::{AudioIo, InputSide, OutputSide, PipelineStatus, StreamGuard};
 use crate::audio::level::{InputLevel, LEVEL_WINDOW_MS, SharedLevel};
-use crate::audio::resample::MAX_RATE_ADJUST;
+use crate::audio::resample::{MAX_CATCH_UP, MAX_RATE_ADJUST};
 use crate::audio::{
     AudioConsumer, AudioDevice, AudioProducer, DeviceKind, FromTranslator, StreamFormat,
     ToTranslator,
@@ -57,29 +76,36 @@ const OUTPUT_CHUNK_SAMPLES: usize = samples_for_ms(10);
 /// Most chunks the pump writes per tick, so a stuck playback queue cannot spin it.
 const MAX_FILLS_PER_TICK: usize = 32;
 
-/// How often the audio sent so far is reported.
+/// How often the audio sent so far is reported (and jitter stats recorded).
 const AUDIO_SENT_INTERVAL: Duration = Duration::from_secs(1);
 
 /// How often the supervisor checks that both devices still work.
 const HEALTH_INTERVAL: Duration = Duration::from_millis(100);
 
-/// Longest wait for the translator to close gracefully on stop.
+/// Silence sent after the user stops, so the model finishes the last sentence.
+const TRAILING_SILENCE: Duration = Duration::from_millis(1500);
+
+/// Longest a graceful stop may take (trailing silence, close, playing the tail).
+const STOP_DRAIN_LIMIT: Duration = Duration::from_secs(10);
+
+/// Time after the jitter buffer is empty for the playback queue to reach the cable.
+const CABLE_DRAIN_TAIL: Duration = Duration::from_millis(150);
+
+/// Longest wait for the translator to close after a fatal error or a timed-out stop.
 const CLOSE_TIMEOUT: Duration = Duration::from_secs(3);
 
-/// Input RMS (24 kHz mono, ~-34 dBFS) above which a latency measurement starts.
-const SPEECH_RMS: f32 = 0.02;
+/// Backlog above the prebuffer at which the drift correction reaches [`MAX_RATE_ADJUST`].
+const DRIFT_RANGE_MS: f64 = 1000.0;
 
-/// Quiet input needed before the next latency measurement can start.
-const LATENCY_REARM_SILENCE: Duration = Duration::from_secs(1);
-
-/// Latency samples kept for [`OutgoingPipeline::latency_samples`].
-const MAX_LATENCY_SAMPLES: usize = 64;
+/// Backlog above the prebuffer at which the catch-up reaches [`MAX_CATCH_UP`].
+const CATCH_UP_FULL_MS: f64 = 4000.0;
 
 /// What the outgoing pipeline reports while it runs.
 #[derive(Debug, Clone, PartialEq)]
 pub enum OutgoingEvent {
     /// The pipeline's state changed. The first event is `connecting`; the last one is always
-    /// `idle` (stopped) or `error` (could not start, or stopped on a fatal error).
+    /// `idle` (stopped) or `error` (could not start, or stopped on a fatal error). A stop asked
+    /// by the user goes through `stopping` first.
     Status(PipelineStatus),
     /// Microphone level, ~20 times per second while live.
     Level(InputLevel),
@@ -142,12 +168,97 @@ pub fn check_devices(settings: &OutgoingSettings, devices: &[AudioDevice]) -> Ap
     Ok(output.is_virtual_cable)
 }
 
+/// State shared by the pump thread and the supervisor task.
+struct Shared {
+    started: Instant,
+    jitter: Mutex<JitterBuffer>,
+    latency: Mutex<LatencyTracker>,
+    health: Mutex<InputHealth>,
+    recorder: Mutex<Option<SessionRecorder>>,
+    /// Ends the pump thread.
+    stop: AtomicBool,
+    /// Stop requested: send silence instead of the microphone.
+    trailing: AtomicBool,
+    /// The trailing silence has been sent; nothing more goes to the translator.
+    input_done: AtomicBool,
+    /// The jitter buffer was drained (after `finish_input`) and its tail reached the cable.
+    cable_drained: AtomicBool,
+    sent_samples: AtomicU64,
+    output_deltas: AtomicU64,
+}
+
+impl Shared {
+    fn new(recorder: Option<SessionRecorder>) -> Self {
+        Self {
+            started: Instant::now(),
+            jitter: Mutex::new(JitterBuffer::default()),
+            latency: Mutex::new(LatencyTracker::default()),
+            health: Mutex::new(InputHealth::default()),
+            recorder: Mutex::new(recorder),
+            stop: AtomicBool::new(false),
+            trailing: AtomicBool::new(false),
+            input_done: AtomicBool::new(false),
+            cable_drained: AtomicBool::new(false),
+            sent_samples: AtomicU64::new(0),
+            output_deltas: AtomicU64::new(0),
+        }
+    }
+
+    /// Time since the pipeline went live.
+    fn elapsed(&self) -> Duration {
+        self.started.elapsed()
+    }
+
+    /// Runs `write` on the recorder, if recording.
+    fn record(&self, write: impl FnOnce(&mut SessionRecorder)) {
+        if let Some(recorder) = lock(&self.recorder).as_mut() {
+            write(recorder);
+        }
+    }
+
+    fn record_event(&self, fields: serde_json::Value) {
+        let at = self.elapsed();
+        self.record(|recorder| recorder.event(at, fields));
+    }
+
+    /// Logs (debug) and records what the latency tracker noticed.
+    fn latency_event(&self, event: LatencyEvent) {
+        let fields = match event {
+            LatencyEvent::SpeechStart { at } => {
+                tracing::debug!(at_ms = at.as_millis() as u64, "outgoing speech started");
+                json!({ "kind": "speech_start", "at_ms": at.as_millis() as u64 })
+            }
+            LatencyEvent::SpeechEnd { at } => {
+                tracing::debug!(at_ms = at.as_millis() as u64, "outgoing speech ended");
+                json!({ "kind": "speech_end", "at_ms": at.as_millis() as u64 })
+            }
+            LatencyEvent::StartToAudio { utterance, latency } => {
+                tracing::debug!(
+                    utterance,
+                    latency_ms = latency.as_millis() as u64,
+                    "outgoing latency: start of speech -> first translated audio"
+                );
+                json!({ "kind": "latency_start_to_audio", "utterance": utterance, "ms": latency.as_millis() as u64 })
+            }
+            LatencyEvent::EndToAudio { utterance, latency } => {
+                tracing::debug!(
+                    utterance,
+                    latency_ms = latency.as_millis() as u64,
+                    "outgoing latency: end of speech -> first translated audio"
+                );
+                json!({ "kind": "latency_end_to_audio", "utterance": utterance, "ms": latency.as_millis() as u64 })
+            }
+        };
+        self.record_event(fields);
+    }
+}
+
 /// A running outgoing translation. Stop it with [`stop`](Self::stop); dropping it also stops it
 /// (in the background).
 pub struct OutgoingPipeline {
     stop: Option<oneshot::Sender<()>>,
     task: Option<JoinHandle<()>>,
-    latencies: Arc<Mutex<Vec<Duration>>>,
+    shared: Arc<Shared>,
 }
 
 impl OutgoingPipeline {
@@ -234,9 +345,12 @@ impl OutgoingPipeline {
             format: output_format,
             stream: output_stream,
         } = output;
-        let jitter = Arc::new(Mutex::new(JitterBuffer::default()));
-        let probe = Arc::new(Mutex::new(LatencyProbe::default()));
-        let latencies = Arc::new(Mutex::new(Vec::new()));
+        let recorder = SessionRecorder::from_env(
+            "outgoing",
+            output_format.sample_rate,
+            output_format.channels,
+        );
+        let shared = Arc::new(Shared::new(recorder));
 
         events(OutgoingEvent::Status(PipelineStatus::live()));
         let pump = Pump::spawn(PumpParts {
@@ -246,8 +360,7 @@ impl OutgoingPipeline {
             output: producer,
             output_format,
             from_translator,
-            jitter: Arc::clone(&jitter),
-            probe: Arc::clone(&probe),
+            shared: Arc::clone(&shared),
             level,
             events: Arc::clone(&events),
         });
@@ -266,16 +379,15 @@ impl OutgoingPipeline {
             input_stream,
             output_stream,
             pump,
-            jitter,
-            probe,
-            latencies: Arc::clone(&latencies),
+            shared: Arc::clone(&shared),
             events,
+            last_error: None,
         };
         let task = tokio::spawn(supervisor.run(stop_rx));
         Ok(Self {
             stop: Some(stop_tx),
             task: Some(task),
-            latencies,
+            shared,
         })
     }
 
@@ -284,7 +396,8 @@ impl OutgoingPipeline {
         self.task.as_ref().is_none_or(JoinHandle::is_finished)
     }
 
-    /// Stops the pipeline and waits until every device is released and the translator closed.
+    /// Stops the pipeline (gracefully: see the module docs) and waits until every device is
+    /// released and the translator closed.
     pub async fn stop(mut self) {
         if let Some(stop) = self.stop.take() {
             let _ = stop.send(());
@@ -296,10 +409,9 @@ impl OutgoingPipeline {
         }
     }
 
-    /// Latency measurements so far: time from the first speech sent to the translator to the
-    /// first translated audio received, once per utterance.
-    pub fn latency_samples(&self) -> Vec<Duration> {
-        lock(&self.latencies).clone()
+    /// Latency per utterance so far (see [`super::latency`]).
+    pub fn latency_report(&self) -> LatencyReport {
+        lock(&self.shared.latency).report()
     }
 }
 
@@ -312,75 +424,194 @@ impl Drop for OutgoingPipeline {
     }
 }
 
+/// What to do after an output.
+enum Next {
+    Continue,
+    /// The session cannot go on.
+    Fatal(AppError),
+    /// `Closed`: the session ended.
+    Closed,
+}
+
 /// Owns everything while the pipeline is live; see the module docs.
 struct Supervisor {
     session: LiveSession,
     input_stream: Box<dyn StreamGuard>,
     output_stream: Box<dyn StreamGuard>,
     pump: Pump,
-    jitter: Arc<Mutex<JitterBuffer>>,
-    probe: Arc<Mutex<LatencyProbe>>,
-    latencies: Arc<Mutex<Vec<Duration>>>,
+    shared: Arc<Shared>,
     events: EventSink,
+    /// The latest non-fatal error, reported if the session then closes.
+    last_error: Option<TranslatorError>,
 }
 
 impl Supervisor {
     async fn run(mut self, mut stop: oneshot::Receiver<()>) {
         let mut health = tokio::time::interval(HEALTH_INTERVAL);
-        let mut last_error: Option<TranslatorError> = None;
         // `None` = stopped by the user.
         let failure: Option<AppError> = loop {
             tokio::select! {
                 _ = &mut stop => break None,
                 _ = health.tick() => {
-                    if let Some(failure) = self
-                        .input_stream
-                        .failure()
-                        .or_else(|| self.output_stream.failure())
-                    {
+                    if let Some(failure) = self.device_failure() {
                         break Some(AppError::Audio(failure));
                     }
                 }
-                output = self.session.next_output() => match output {
-                    Some(TranslatorOutput::Audio(samples)) => {
-                        on_translated_audio(&self.jitter, &self.probe, &self.latencies, &samples);
-                    }
-                    Some(TranslatorOutput::OutputTranscriptDelta(text)) => {
-                        (self.events)(OutgoingEvent::TranscriptDelta(text));
-                    }
-                    Some(TranslatorOutput::InputTranscriptDelta(_)) => {}
-                    Some(TranslatorOutput::Error { code, message }) => {
-                        let error = TranslatorError::from_api_error(code, &message);
-                        if is_fatal(&error) {
-                            break Some(error.into());
-                        }
-                        tracing::warn!(code = error.code(), %error, "translator reported an error");
-                        last_error = Some(error);
-                    }
-                    Some(TranslatorOutput::Closed) | None => {
-                        break Some(last_error.take().unwrap_or(TranslatorError::Closed).into());
+                output = self.session.next_output() => match self.on_output(output) {
+                    Next::Continue => {}
+                    Next::Fatal(error) => break Some(error),
+                    Next::Closed => {
+                        break Some(self.last_error.take().unwrap_or(TranslatorError::Closed).into());
                     }
                 }
             }
         };
-        self.shutdown(failure).await;
+        let drained = match failure {
+            None => self.drain().await,
+            Some(_) => false,
+        };
+        self.shutdown(failure, drained).await;
     }
 
-    /// Tears down in order and emits the final status.
-    async fn shutdown(self, failure: Option<AppError>) {
+    fn device_failure(&self) -> Option<String> {
+        self.input_stream
+            .failure()
+            .or_else(|| self.output_stream.failure())
+    }
+
+    fn on_output(&mut self, output: Option<TranslatorOutput>) -> Next {
+        let shared = &self.shared;
+        match output {
+            Some(TranslatorOutput::Audio(samples)) => {
+                let at = shared.elapsed();
+                let buffered_ms = {
+                    let mut jitter = lock(&shared.jitter);
+                    jitter.push(&samples);
+                    jitter.buffered().as_millis() as u64
+                };
+                shared.output_deltas.fetch_add(1, Ordering::Relaxed);
+                let latency_events = lock(&shared.latency).on_output(at);
+                shared.record(|recorder| recorder.received(&samples, at, buffered_ms));
+                for event in latency_events {
+                    shared.latency_event(event);
+                }
+                Next::Continue
+            }
+            Some(TranslatorOutput::OutputTranscriptDelta(text)) => {
+                shared.record_event(json!({ "kind": "output_transcript", "text": text }));
+                (self.events)(OutgoingEvent::TranscriptDelta(text));
+                Next::Continue
+            }
+            Some(TranslatorOutput::InputTranscriptDelta(text)) => {
+                shared.record_event(json!({ "kind": "input_transcript", "text": text }));
+                Next::Continue
+            }
+            Some(TranslatorOutput::Error { code, message }) => {
+                let error = TranslatorError::from_api_error(code, &message);
+                shared.record_event(json!({ "kind": "error", "code": error.code() }));
+                if is_fatal(&error) {
+                    return Next::Fatal(error.into());
+                }
+                tracing::warn!(code = error.code(), %error, "translator reported an error");
+                self.last_error = Some(error);
+                Next::Continue
+            }
+            Some(TranslatorOutput::Closed) | None => Next::Closed,
+        }
+    }
+
+    /// The graceful part of a stop asked by the user. Returns whether everything was played
+    /// within [`STOP_DRAIN_LIMIT`].
+    async fn drain(&mut self) -> bool {
+        (self.events)(OutgoingEvent::Status(PipelineStatus::stopping()));
+        self.shared
+            .record_event(json!({ "kind": "stop_requested" }));
+        tracing::info!("outgoing translation stopping: finishing the last sentence");
+        let deadline = tokio::time::Instant::now() + STOP_DRAIN_LIMIT;
+        self.shared.trailing.store(true, Ordering::Relaxed);
+        let mut poll = tokio::time::interval(Duration::from_millis(20));
+
+        #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+        enum Phase {
+            /// Sending the trailing silence.
+            Trailing,
+            /// `session.close` sent, reading outputs until `session.closed`.
+            Closing,
+            /// Playing the jitter buffer's tail into the cable.
+            Playing,
+        }
+        let mut phase = Phase::Trailing;
+        loop {
+            if phase == Phase::Trailing
+                && (self.shared.input_done.load(Ordering::Relaxed)
+                    || self.input_stream.failure().is_some())
+            {
+                self.session.stop();
+                self.shared
+                    .record_event(json!({ "kind": "session_close_sent" }));
+                phase = Phase::Closing;
+            }
+            if phase == Phase::Playing && self.shared.cable_drained.load(Ordering::Relaxed) {
+                self.shared.record_event(json!({ "kind": "cable_drained" }));
+                return true;
+            }
+            if self.output_stream.failure().is_some() {
+                return false;
+            }
+            tokio::select! {
+                () = tokio::time::sleep_until(deadline) => {
+                    tracing::warn!(
+                        ?phase,
+                        limit_s = STOP_DRAIN_LIMIT.as_secs(),
+                        "the translation did not finish in time; stopping anyway"
+                    );
+                    self.shared.record_event(json!({ "kind": "stop_timeout", "phase": format!("{phase:?}") }));
+                    return false;
+                }
+                _ = poll.tick() => {}
+                output = self.session.next_output(), if phase != Phase::Playing => {
+                    match self.on_output(output) {
+                        Next::Continue => {}
+                        Next::Fatal(error) => {
+                            tracing::warn!(code = error.code(), %error, "translator error while stopping");
+                            lock(&self.shared.jitter).finish_input();
+                            phase = Phase::Playing;
+                        }
+                        Next::Closed => {
+                            self.shared.record_event(json!({ "kind": "session_closed" }));
+                            // Closed before the trailing silence ended: nothing more to send.
+                            self.shared.input_done.store(true, Ordering::Relaxed);
+                            lock(&self.shared.jitter).finish_input();
+                            phase = Phase::Playing;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Tears down in order, logs the session summary and emits the final status.
+    async fn shutdown(self, failure: Option<AppError>, drained: bool) {
         let Self {
             session,
             input_stream,
             output_stream,
             mut pump,
+            shared,
             events,
             ..
         } = self;
 
         // No more microphone audio.
         stop_streams(vec![input_stream]).await;
-        // Graceful close: `session.close`, then wait for `session.closed`.
-        if tokio::time::timeout(CLOSE_TIMEOUT, session.finish())
+        // After a drained stop the session is already closed and this returns at once.
+        let dropped_chunks = session.dropped_chunks();
+        let close_wait = if drained {
+            Duration::from_secs(1)
+        } else {
+            CLOSE_TIMEOUT
+        };
+        if tokio::time::timeout(close_wait, session.finish())
             .await
             .is_err()
         {
@@ -393,6 +624,8 @@ impl Supervisor {
             output_stream.stop();
         })
         .await;
+
+        log_summary(&shared, dropped_chunks);
 
         events(OutgoingEvent::Level(InputLevel::default()));
         match failure {
@@ -408,31 +641,82 @@ impl Supervisor {
     }
 }
 
+/// Logs the one-line session summary (and records it), then finishes the recording.
+fn log_summary(shared: &Shared, dropped_chunks: u64) {
+    let jitter = lock(&shared.jitter).stats();
+    let sent = shared.sent_samples.load(Ordering::Relaxed);
+    let deltas = shared.output_deltas.load(Ordering::Relaxed);
+    let seconds = |samples: u64| (samples as f64 / f64::from(SAMPLE_RATE) * 10.0).round() / 10.0;
+    tracing::info!(
+        jitter_underruns = jitter.underruns,
+        jitter_dropped_samples = jitter.dropped_samples,
+        jitter_max_buffered_ms = jitter.max_buffered_ms(),
+        utterances_played = jitter.utterances,
+        output_deltas = deltas,
+        sent_s = seconds(sent),
+        sent_bytes = sent * 2,
+        received_s = seconds(jitter.pushed_samples),
+        received_bytes = jitter.pushed_samples * 2,
+        input_dropped_chunks = dropped_chunks,
+        "outgoing session summary"
+    );
+    let latency = lock(&shared.latency).report();
+    tracing::info!("outgoing latency: {latency}");
+    let input = lock(&shared.health).summary();
+    tracing::info!(
+        peak_dbfs = input.peak_dbfs,
+        rms_dbfs = input.rms_dbfs,
+        speech_rms_dbfs = input.speech_rms_dbfs,
+        clipped_samples = input.clipped_samples,
+        channel_rms_dbfs = ?input.channel_rms_dbfs,
+        "outgoing microphone summary"
+    );
+    for warning in &input.warnings {
+        tracing::warn!("microphone: {warning}");
+    }
+
+    let spread = |spread: Option<super::latency::Spread>| {
+        spread.map(|s| {
+            json!({
+                "count": s.count,
+                "min_ms": s.min.as_millis() as u64,
+                "median_ms": s.median.as_millis() as u64,
+                "max_ms": s.max.as_millis() as u64,
+            })
+        })
+    };
+    shared.record_event(json!({
+        "kind": "summary",
+        "jitter_underruns": jitter.underruns,
+        "jitter_dropped_samples": jitter.dropped_samples,
+        "jitter_max_buffered_ms": jitter.max_buffered_ms(),
+        "utterances_played": jitter.utterances,
+        "output_deltas": deltas,
+        "sent_s": seconds(sent),
+        "sent_bytes": sent * 2,
+        "received_s": seconds(jitter.pushed_samples),
+        "received_bytes": jitter.pushed_samples * 2,
+        "input_dropped_chunks": dropped_chunks,
+        "latency_start_to_audio": spread(latency.start_to_audio),
+        "latency_end_to_audio": spread(latency.end_to_audio),
+        "mic_peak_dbfs": input.peak_dbfs,
+        "mic_rms_dbfs": input.rms_dbfs,
+        "mic_speech_rms_dbfs": input.speech_rms_dbfs,
+        "mic_clipped_samples": input.clipped_samples,
+        "mic_channel_rms_dbfs": input.channel_rms_dbfs,
+        "mic_warnings": input.warnings,
+    }));
+    if let Some(recorder) = lock(&shared.recorder).take() {
+        recorder.finish();
+    }
+}
+
 /// Errors after which the session cannot go on.
 fn is_fatal(error: &TranslatorError) -> bool {
     matches!(
         error,
         TranslatorError::Auth | TranslatorError::NoModelAccess | TranslatorError::RateLimited
     )
-}
-
-fn on_translated_audio(
-    jitter: &Mutex<JitterBuffer>,
-    probe: &Mutex<LatencyProbe>,
-    latencies: &Mutex<Vec<Duration>>,
-    samples: &[i16],
-) {
-    if let Some(latency) = lock(probe).on_output(Instant::now()) {
-        tracing::debug!(
-            latency_ms = latency.as_millis() as u64,
-            "outgoing latency sample (first speech sent -> first translated audio)"
-        );
-        let mut latencies = lock(latencies);
-        if latencies.len() < MAX_LATENCY_SAMPLES {
-            latencies.push(latency);
-        }
-    }
-    lock(jitter).push(samples);
 }
 
 /// What the pump thread owns.
@@ -443,35 +727,33 @@ struct PumpParts {
     output: AudioProducer,
     output_format: StreamFormat,
     from_translator: FromTranslator,
-    jitter: Arc<Mutex<JitterBuffer>>,
-    probe: Arc<Mutex<LatencyProbe>>,
+    shared: Arc<Shared>,
     level: SharedLevel,
     events: EventSink,
 }
 
 struct Pump {
-    stop: Arc<AtomicBool>,
+    shared: Arc<Shared>,
     thread: Option<ThreadHandle<()>>,
 }
 
 impl Pump {
     fn spawn(parts: PumpParts) -> AppResult<Self> {
-        let stop = Arc::new(AtomicBool::new(false));
-        let thread_stop = Arc::clone(&stop);
+        let shared = Arc::clone(&parts.shared);
         let thread = std::thread::Builder::new()
             .name("livedub-outgoing".into())
-            .spawn(move || run_pump(parts, &thread_stop))
+            .spawn(move || run_pump(parts))
             .map_err(|error| {
                 AppError::Internal(format!("could not start the outgoing thread: {error}"))
             })?;
         Ok(Self {
-            stop,
+            shared,
             thread: Some(thread),
         })
     }
 
     fn stop(&mut self) {
-        self.stop.store(true, Ordering::Relaxed);
+        self.shared.stop.store(true, Ordering::Relaxed);
         if let Some(thread) = self.thread.take()
             && thread.join().is_err()
         {
@@ -486,7 +768,8 @@ impl Drop for Pump {
     }
 }
 
-fn run_pump(mut parts: PumpParts, stop: &AtomicBool) {
+fn run_pump(mut parts: PumpParts) {
+    let shared = Arc::clone(&parts.shared);
     let channels = parts.input.channels();
     let mut mic = vec![0.0_f32; 1024 * channels];
     let mut pcm: Vec<i16> = Vec::with_capacity(samples_for_ms(100));
@@ -496,37 +779,67 @@ fn run_pump(mut parts: PumpParts, stop: &AtomicBool) {
     );
     let target_frames = parts.output_format.frames_for_ms(OUTPUT_TARGET_MS);
     let level_interval = Duration::from_millis(u64::from(LEVEL_WINDOW_MS));
+    let trailing_samples = samples_for_ms(TRAILING_SILENCE.as_millis() as u32) as u64;
+    let mut trailing_sent: u64 = 0;
     let mut sent_samples: u64 = 0;
     let mut rate = 1.0;
+    let mut drained_since: Option<Instant> = None;
     let mut next_level = Instant::now();
     let mut next_sent = Instant::now() + AUDIO_SENT_INTERVAL;
     let seconds = |samples: u64| samples as f64 / f64::from(SAMPLE_RATE);
 
-    while !stop.load(Ordering::Relaxed) {
+    while !shared.stop.load(Ordering::Relaxed) {
         // Microphone -> translator.
+        let trailing = shared.trailing.load(Ordering::Relaxed);
         loop {
             let read = parts.input.pop(&mut mic);
             if read == 0 {
                 break;
             }
+            if !trailing {
+                lock(&shared.health).captured(&mic[..read], channels);
+            }
             parts.to_translator.process(&mic[..read], &mut pcm);
         }
-        if !pcm.is_empty() {
-            lock(&parts.probe).on_input(rms(&pcm), Instant::now());
+        if !pcm.is_empty() && !shared.input_done.load(Ordering::Relaxed) {
+            if trailing {
+                // The user stopped: silence, paced by the microphone's clock, so the model
+                // finishes the last sentence.
+                let take = (trailing_samples - trailing_sent).min(pcm.len() as u64) as usize;
+                pcm.truncate(take);
+                pcm.fill(0);
+                trailing_sent += take as u64;
+            }
+            let block_rms = rms(&pcm);
+            let at = shared.elapsed();
+            let latency_event = lock(&shared.latency).on_input(block_rms, at);
+            if let Some(event) = latency_event {
+                shared.latency_event(event);
+            }
+            if !trailing {
+                lock(&shared.health).sent(&pcm, block_rms >= SPEECH_RMS);
+            }
             if parts.session_input.push(&pcm) {
                 sent_samples += pcm.len() as u64;
+                shared.sent_samples.store(sent_samples, Ordering::Relaxed);
+                shared.record(|recorder| recorder.sent(&pcm, at));
             }
-            pcm.clear();
+            if trailing && trailing_sent >= trailing_samples {
+                shared.input_done.store(true, Ordering::Relaxed);
+            }
         }
+        pcm.clear();
 
         // Translator -> cable, at the cable's pace.
+        let mut drained = false;
         for _ in 0..MAX_FILLS_PER_TICK {
             if parts.output.queued_frames() >= target_frames {
                 break;
             }
             let wanted = {
-                let mut jitter = lock(&parts.jitter);
+                let mut jitter = lock(&shared.jitter);
                 jitter.pull(&mut translated);
+                drained = jitter.is_drained();
                 drift_adjust(&jitter)
             };
             if (wanted - rate).abs() > 0.000_5 {
@@ -534,10 +847,18 @@ fn run_pump(mut parts: PumpParts, stop: &AtomicBool) {
             }
             parts.from_translator.process(&translated, &mut device);
             parts.output.push(&device);
+            shared.record(|recorder| recorder.cable(&device));
             device.clear();
         }
 
         let now = Instant::now();
+        if drained {
+            // Wait for the playback queue to reach the cable too.
+            let since = *drained_since.get_or_insert(now);
+            if now.duration_since(since) >= CABLE_DRAIN_TAIL {
+                shared.cable_drained.store(true, Ordering::Relaxed);
+            }
+        }
         if now >= next_level {
             (parts.events)(OutgoingEvent::Level(parts.level.get()));
             next_level = now + level_interval;
@@ -546,6 +867,20 @@ fn run_pump(mut parts: PumpParts, stop: &AtomicBool) {
             (parts.events)(OutgoingEvent::AudioSent {
                 seconds: seconds(sent_samples),
             });
+            let (stats, buffered_ms) = {
+                let jitter = lock(&shared.jitter);
+                (jitter.stats(), jitter.buffered().as_millis() as u64)
+            };
+            shared.record_event(json!({
+                "kind": "jitter",
+                "buffered_ms": buffered_ms,
+                "underruns": stats.underruns,
+                "dropped_samples": stats.dropped_samples,
+                "utterances": stats.utterances,
+                "rate": (rate * 10_000.0).round() / 10_000.0,
+                "input_queued_chunks": parts.session_input.queued_chunks(),
+                "input_dropped_chunks": parts.session_input.dropped_chunks(),
+            }));
             next_sent = now + AUDIO_SENT_INTERVAL;
         }
         std::thread::sleep(TICK);
@@ -555,16 +890,27 @@ fn run_pump(mut parts: PumpParts, stop: &AtomicBool) {
     });
 }
 
-/// Output rate factor for the jitter buffer's level: 1.0 up to the prebuffer target, then up to
-/// `1 - MAX_RATE_ADJUST` (each translated sample becomes fewer cable frames, so the backlog
-/// drains) when it holds twice the target or more.
+/// Output rate factor for the jitter buffer's backlog (audio queued above the prebuffer
+/// target): 1.0 at or below the target; then down to `1 - MAX_RATE_ADJUST` at
+/// [`DRIFT_RANGE_MS`] of backlog (clock drift, inaudible); then down to `1 - MAX_CATCH_UP` at
+/// [`CATCH_UP_FULL_MS`] (a burst of translated speech waiting: play it slightly faster rather
+/// than fall seconds behind). Below 1.0 each translated sample becomes fewer cable frames.
 fn drift_adjust(jitter: &JitterBuffer) -> f64 {
     if !jitter.is_playing() {
         return 1.0;
     }
-    let target = jitter.target_samples().max(1) as f64;
-    let excess = (jitter.buffered_samples() as f64 - target) / target;
-    1.0 - excess.clamp(0.0, 1.0) * MAX_RATE_ADJUST
+    let excess_samples = jitter
+        .buffered_samples()
+        .saturating_sub(jitter.target_samples());
+    let excess_ms = excess_samples as f64 * 1000.0 / f64::from(SAMPLE_RATE);
+    let speed_up = if excess_ms <= DRIFT_RANGE_MS {
+        MAX_RATE_ADJUST * excess_ms / DRIFT_RANGE_MS
+    } else {
+        let catch_up =
+            ((excess_ms - DRIFT_RANGE_MS) / (CATCH_UP_FULL_MS - DRIFT_RANGE_MS)).min(1.0);
+        MAX_RATE_ADJUST + (MAX_CATCH_UP - MAX_RATE_ADJUST) * catch_up
+    };
+    1.0 - speed_up
 }
 
 /// RMS of PCM16 samples, linear 0–1.
@@ -580,55 +926,6 @@ fn rms(samples: &[i16]) -> f32 {
         })
         .sum();
     (sum / samples.len() as f64).sqrt() as f32
-}
-
-/// Measures the time from the first speech sent to the first translated audio received.
-///
-/// Armed -> (speech sent) -> Waiting -> (audio received: one sample) -> Measured -> (a second of
-/// quiet input) -> Armed. Waiting for quiet keeps continuous speech from being measured against
-/// audio that belongs to an earlier sentence.
-#[derive(Debug, Default)]
-struct LatencyProbe {
-    state: ProbeState,
-}
-
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-enum ProbeState {
-    #[default]
-    Armed,
-    Waiting(Instant),
-    Measured {
-        quiet_since: Option<Instant>,
-    },
-}
-
-impl LatencyProbe {
-    fn on_input(&mut self, rms: f32, now: Instant) {
-        let speech = rms >= SPEECH_RMS;
-        self.state = match self.state {
-            ProbeState::Armed if speech => ProbeState::Waiting(now),
-            ProbeState::Measured { .. } if speech => ProbeState::Measured { quiet_since: None },
-            ProbeState::Measured { quiet_since } => {
-                let quiet_since = quiet_since.unwrap_or(now);
-                if now.duration_since(quiet_since) >= LATENCY_REARM_SILENCE {
-                    ProbeState::Armed
-                } else {
-                    ProbeState::Measured {
-                        quiet_since: Some(quiet_since),
-                    }
-                }
-            }
-            state => state,
-        };
-    }
-
-    fn on_output(&mut self, now: Instant) -> Option<Duration> {
-        let ProbeState::Waiting(since) = self.state else {
-            return None;
-        };
-        self.state = ProbeState::Measured { quiet_since: None };
-        Some(now.duration_since(since))
-    }
 }
 
 /// Runs blocking device work off the async runtime.
@@ -924,7 +1221,7 @@ mod tests {
             .await
             .unwrap();
         tokio::time::sleep(Duration::from_millis(1500)).await;
-        let latencies = pipeline.latency_samples();
+        let latency = pipeline.latency_report();
         pipeline.stop().await;
 
         // The echoed tone reached the cable: at least 0.3 s of it, in the cable's format.
@@ -939,6 +1236,7 @@ mod tests {
             [
                 PipelineState::Connecting,
                 PipelineState::Live,
+                PipelineState::Stopping,
                 PipelineState::Idle
             ]
         );
@@ -967,14 +1265,17 @@ mod tests {
                 _ => None,
             })
             .unwrap();
-        assert!((1.0..2.0).contains(&sent), "{sent} s sent");
+        // 1.5 s live plus 1.5 s of trailing silence.
+        assert!((2.5..4.0).contains(&sent), "{sent} s sent");
 
-        // Chunking (200 ms) plus the echo delay (100 ms), give or take a few ticks.
-        println!("latency samples: {latencies:?}");
-        assert_eq!(latencies.len(), 1, "{latencies:?}");
+        // The tone is one utterance: chunking (200 ms) plus the echo delay (100 ms), give or
+        // take a few ticks.
+        println!("latency: {latency}");
+        assert_eq!(latency.utterances.len(), 1, "{latency:?}");
+        let start_to_audio = latency.utterances[0].start_to_audio.unwrap();
         assert!(
-            (Duration::from_millis(250)..Duration::from_millis(600)).contains(&latencies[0]),
-            "{latencies:?}"
+            (Duration::from_millis(250)..Duration::from_millis(600)).contains(&start_to_audio),
+            "{latency:?}"
         );
     }
 
@@ -1141,41 +1442,96 @@ mod tests {
     }
 
     #[test]
-    fn latency_probe_measures_once_per_utterance() {
-        let start = Instant::now();
-        let at = |ms: u64| start + Duration::from_millis(ms);
-        let mut probe = LatencyProbe::default();
-
-        probe.on_input(0.0, at(0));
-        assert_eq!(probe.on_output(at(10)), None, "no speech yet");
-        probe.on_input(0.2, at(100));
-        probe.on_input(0.2, at(200));
-        assert_eq!(probe.on_output(at(900)), Some(Duration::from_millis(800)));
-        assert_eq!(probe.on_output(at(950)), None, "already measured");
-
-        // Speech right after: still the same utterance.
-        probe.on_input(0.2, at(1000));
-        probe.on_input(0.0, at(1100));
-        probe.on_input(0.2, at(1500));
-        assert_eq!(probe.on_output(at(1600)), None);
-
-        // A second of quiet re-arms it.
-        probe.on_input(0.0, at(2000));
-        probe.on_input(0.0, at(3000));
-        probe.on_input(0.3, at(3100));
-        assert_eq!(probe.on_output(at(3500)), Some(Duration::from_millis(400)));
-    }
-
-    #[test]
     fn drift_adjust_drains_a_growing_backlog() {
+        let ms = |value: usize| value * SAMPLE_RATE as usize / 1000;
         let mut jitter = JitterBuffer::default();
         assert_eq!(drift_adjust(&jitter), 1.0);
-        jitter.push(&vec![0; jitter.target_samples()]);
+        let target = jitter.target_samples();
+        jitter.push(&vec![0; target]);
         assert_eq!(drift_adjust(&jitter), 1.0);
-        jitter.push(&vec![0; jitter.target_samples() / 2]);
-        assert!((drift_adjust(&jitter) - (1.0 - MAX_RATE_ADJUST / 2.0)).abs() < 1e-9);
-        jitter.push(&vec![0; jitter.target_samples() * 4]);
-        assert!((drift_adjust(&jitter) - (1.0 - MAX_RATE_ADJUST)).abs() < 1e-9);
+        // Half a second of backlog: gentle drift correction.
+        jitter.push(&vec![0; ms(500)]);
+        assert!((drift_adjust(&jitter) - (1.0 - MAX_RATE_ADJUST / 2.0)).abs() < 1e-6);
+        // One second: the drift correction's limit.
+        jitter.push(&vec![0; ms(500)]);
+        assert!((drift_adjust(&jitter) - (1.0 - MAX_RATE_ADJUST)).abs() < 1e-6);
+        // Seconds waiting: catching up, up to MAX_CATCH_UP.
+        jitter.push(&vec![0; ms(1500)]);
+        let halfway = 1.0 - (MAX_RATE_ADJUST + MAX_CATCH_UP) / 2.0;
+        assert!((drift_adjust(&jitter) - halfway).abs() < 1e-6);
+        jitter.push(&vec![0; ms(10_000)]);
+        assert!((drift_adjust(&jitter) - (1.0 - MAX_CATCH_UP)).abs() < 1e-6);
+    }
+
+    /// A translator that only answers when the input closes: after `tail_delay` it sends one
+    /// second of loud audio (the translation of the last sentence), then `Closed`.
+    struct TailTranslator {
+        tail_delay: Duration,
+    }
+
+    impl Translator for TailTranslator {
+        fn name(&self) -> &'static str {
+            "tail"
+        }
+
+        fn start(
+            &self,
+            _target_language: Language,
+        ) -> futures_util::future::BoxFuture<'_, Result<LiveSession, TranslatorError>> {
+            Box::pin(async move {
+                let (input, reader) = input_channel(5);
+                let (outputs_tx, outputs_rx) = mpsc::channel(16);
+                let delay = self.tail_delay;
+                let task = tokio::spawn(async move {
+                    while reader.next_chunk().await.is_some() {}
+                    tokio::time::sleep(delay).await;
+                    let _ = outputs_tx
+                        .send(TranslatorOutput::Audio(vec![20_000; SAMPLE_RATE as usize]))
+                        .await;
+                    let _ = outputs_tx.send(TranslatorOutput::Closed).await;
+                });
+                Ok(LiveSession::new(input, outputs_rx, task))
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn graceful_stop_plays_the_tail_of_the_last_sentence() {
+        let io = Arc::new(MemoryIo::new());
+        let (events, recorded) = recorder();
+        let translator = Arc::new(TailTranslator {
+            tail_delay: Duration::from_millis(800),
+        });
+
+        let pipeline = OutgoingPipeline::start(config(), translator, io.clone(), events)
+            .await
+            .unwrap();
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        let stopping = Instant::now();
+        pipeline.stop().await;
+        let took = stopping.elapsed();
+
+        // 1.5 s of trailing silence + 0.8 s for the tail + 1 s of tail played, under the cap.
+        assert!(took >= Duration::from_millis(2_800), "{took:?}");
+        assert!(took < STOP_DRAIN_LIMIT, "{took:?}");
+        // The whole second of tail reached the cable (44.1 kHz stereo), minus resampler edges.
+        let tail = io
+            .played
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|sample| sample.abs() > 0.5)
+            .count();
+        assert!(tail > 44_100 * 2 * 95 / 100, "{tail} tail samples played");
+        assert_eq!(
+            states(&recorded.lock().unwrap()),
+            [
+                PipelineState::Connecting,
+                PipelineState::Live,
+                PipelineState::Stopping,
+                PipelineState::Idle
+            ]
+        );
     }
 
     /// Default microphone -> fake echo translator (300 ms) -> VB-CABLE "CABLE Input" for 3 s,
@@ -1239,7 +1595,7 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(50)).await;
             cable_peak = cable_peak.max(listener.level().peak);
         }
-        let latencies = pipeline.latency_samples();
+        let latency = pipeline.latency_report();
         let stopping = Instant::now();
         pipeline.stop().await;
         println!("stopped in {:?}", stopping.elapsed());
@@ -1254,12 +1610,13 @@ mod tests {
             })
             .fold(0.0_f32, f32::max);
         println!("mic peak {mic_peak:.3}, CABLE Output peak {cable_peak:.3}");
-        println!("latency samples: {latencies:?}");
+        println!("latency: {latency}");
         assert_eq!(
             states(&events),
             [
                 PipelineState::Connecting,
                 PipelineState::Live,
+                PipelineState::Stopping,
                 PipelineState::Idle
             ]
         );
