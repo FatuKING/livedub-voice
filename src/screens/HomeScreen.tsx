@@ -7,7 +7,7 @@ import Notice from "../components/Notice";
 import PageHeader from "../components/PageHeader";
 import Perforation from "../components/Perforation";
 import StatusPill from "../components/StatusPill";
-import { useT } from "../i18n/context";
+import { useI18n, useT } from "../i18n/context";
 import { failureText, type Failure } from "../i18n/errors";
 import {
   getApiKeyStatus,
@@ -18,11 +18,7 @@ import {
   type Language,
   type Settings,
 } from "../lib/api";
-import {
-  languageName,
-  sourceLanguageFor,
-  type Direction,
-} from "../lib/languages";
+import { languageName, type Direction } from "../lib/languages";
 import OutgoingControls, { type OutgoingBlocker } from "../OutgoingControls";
 import "./screens.css";
 
@@ -41,20 +37,16 @@ interface RouteCardProps {
 }
 
 function RouteCard({ direction, target, details, children }: RouteCardProps) {
-  const t = useT();
+  const { t, locale } = useI18n();
   return (
     <Card
       direction={direction}
       eyebrow={t(`home.${direction}.eyebrow`)}
       title={t(`home.${direction}.title`, {
-        language: languageName(target, t),
+        language: languageName(target, locale),
       })}
     >
-      <LanguageRoute
-        direction={direction}
-        from={sourceLanguageFor(target)}
-        to={target}
-      />
+      <LanguageRoute direction={direction} to={target} />
       <Perforation />
       <dl className="ld-pass">
         {details.map(({ label, value }) => (

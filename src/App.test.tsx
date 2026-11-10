@@ -137,10 +137,10 @@ describe("App", () => {
 
     expect(await screen.findByText("Discord.exe")).toBeInTheDocument();
     expect(
-      screen.getByRole("img", { name: "Spanish to English" }),
+      screen.getByRole("img", { name: "Any language to English" }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("img", { name: "English to Spanish" }),
+      screen.getByRole("img", { name: "Any language to Spanish" }),
     ).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "Start incoming" }),

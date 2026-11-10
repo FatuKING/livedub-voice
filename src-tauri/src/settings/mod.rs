@@ -30,13 +30,85 @@ pub const SETTINGS_FILE_NAME: &str = "settings.json";
 /// Highest allowed original-audio volume (percent).
 pub const MAX_ORIGINAL_VOLUME: u8 = 100;
 
-/// A language supported by the translator.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// A target language of the translator (`session.audio.output.language`).
+///
+/// These are the output languages `gpt-realtime-translate` supports, with the codes the API
+/// expects, as listed in OpenAI's realtime translation guide
+/// (<https://developers.openai.com/cookbook/examples/voice_solutions/realtime_translation_guide>).
+/// The source language is auto-detected by the model, so only the target is ever chosen.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Language {
     #[serde(rename = "es")]
     Spanish,
     #[serde(rename = "en")]
     English,
+    #[serde(rename = "pt")]
+    Portuguese,
+    #[serde(rename = "fr")]
+    French,
+    #[serde(rename = "ja")]
+    Japanese,
+    #[serde(rename = "ru")]
+    Russian,
+    #[serde(rename = "zh")]
+    Chinese,
+    #[serde(rename = "de")]
+    German,
+    #[serde(rename = "ko")]
+    Korean,
+    #[serde(rename = "hi")]
+    Hindi,
+    #[serde(rename = "id")]
+    Indonesian,
+    #[serde(rename = "vi")]
+    Vietnamese,
+    #[serde(rename = "it")]
+    Italian,
+}
+
+impl Language {
+    /// Every target language, Spanish and English first.
+    pub const ALL: [Language; 13] = [
+        Language::Spanish,
+        Language::English,
+        Language::Portuguese,
+        Language::French,
+        Language::Japanese,
+        Language::Russian,
+        Language::Chinese,
+        Language::German,
+        Language::Korean,
+        Language::Hindi,
+        Language::Indonesian,
+        Language::Vietnamese,
+        Language::Italian,
+    ];
+
+    /// The code the API expects (and `settings.json` stores), e.g. `"es"`.
+    pub const fn code(self) -> &'static str {
+        match self {
+            Language::Spanish => "es",
+            Language::English => "en",
+            Language::Portuguese => "pt",
+            Language::French => "fr",
+            Language::Japanese => "ja",
+            Language::Russian => "ru",
+            Language::Chinese => "zh",
+            Language::German => "de",
+            Language::Korean => "ko",
+            Language::Hindi => "hi",
+            Language::Indonesian => "id",
+            Language::Vietnamese => "vi",
+            Language::Italian => "it",
+        }
+    }
+
+    /// The language with this API code, if the translator supports it.
+    pub fn from_code(code: &str) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|language| language.code() == code)
+    }
 }
 
 /// Language of the panel itself.
@@ -204,6 +276,32 @@ pub fn migrate(value: &mut serde_json::Value) -> Result<(), String> {
     Ok(())
 }
 
+/// Resets a target language this build does not know (e.g. one written by a newer version) to
+/// that direction's default, with a warning, instead of discarding the whole file.
+fn reset_unknown_languages(value: &mut serde_json::Value) {
+    let defaults = [
+        ("incoming", IncomingSettings::default().target_language),
+        ("outgoing", OutgoingSettings::default().target_language),
+    ];
+    for (direction, default) in defaults {
+        let Some(slot) = value
+            .get_mut(direction)
+            .and_then(|settings| settings.get_mut("targetLanguage"))
+        else {
+            continue;
+        };
+        if slot.as_str().and_then(Language::from_code).is_none() {
+            tracing::warn!(
+                direction,
+                language = %slot,
+                default = default.code(),
+                "unknown target language in settings, using the default"
+            );
+            *slot = default.code().into();
+        }
+    }
+}
+
 /// Loads settings from `path`.
 ///
 /// Files from older versions are migrated (see [`migrate`]); the upgraded file is written on the
@@ -226,6 +324,7 @@ pub fn load(path: &Path) -> Settings {
         .map_err(|error| error.to_string())
         .and_then(|mut value| {
             migrate(&mut value)?;
+            reset_unknown_languages(&mut value);
             serde_json::from_value::<Settings>(value).map_err(|error| error.to_string())
         })
         .and_then(|settings| {
@@ -513,6 +612,106 @@ mod tests {
         save(&path, &settings).unwrap();
 
         assert_eq!(load(&path).ui_language, UiLanguage::Spanish);
+    }
+
+    #[test]
+    fn every_language_round_trips_through_its_code() {
+        for language in Language::ALL {
+            let value = serde_json::to_value(language).unwrap();
+            assert_eq!(value, json!(language.code()));
+            assert_eq!(serde_json::from_value::<Language>(value).unwrap(), language);
+            assert_eq!(Language::from_code(language.code()), Some(language));
+        }
+    }
+
+    #[test]
+    fn language_codes_match_the_api() {
+        let codes: Vec<_> = Language::ALL.iter().map(|l| l.code()).collect();
+        assert_eq!(
+            codes,
+            [
+                "es", "en", "pt", "fr", "ja", "ru", "zh", "de", "ko", "hi", "id", "vi", "it"
+            ]
+        );
+        assert_eq!(Language::from_code("xx"), None);
+    }
+
+    #[test]
+    fn spanish_english_file_still_loads_unchanged() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(SETTINGS_FILE_NAME);
+        let file = json!({
+            "version": 2,
+            "uiLanguage": "es",
+            "incoming": {
+                "enabled": true,
+                "targetLanguage": "en",
+                "sourceApp": { "kind": "allExceptSelf" },
+                "outputDeviceId": null,
+                "originalVolume": 20
+            },
+            "outgoing": {
+                "enabled": false,
+                "targetLanguage": "es",
+                "inputDeviceId": null,
+                "outputDeviceId": "cable-input"
+            }
+        });
+        fs::write(&path, file.to_string()).unwrap();
+
+        let settings = load(&path);
+
+        assert_eq!(settings.incoming.target_language, Language::English);
+        assert_eq!(settings.outgoing.target_language, Language::Spanish);
+        assert_eq!(serde_json::to_value(&settings).unwrap(), file);
+        assert!(!backup_path(&path).exists());
+    }
+
+    #[test]
+    fn new_language_saves_and_loads() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(SETTINGS_FILE_NAME);
+        let mut settings = Settings::default();
+        settings.incoming.target_language = Language::Japanese;
+        settings.outgoing.target_language = Language::Portuguese;
+
+        save(&path, &settings).unwrap();
+
+        assert_eq!(load(&path), settings);
+    }
+
+    #[test]
+    fn unknown_language_falls_back_to_the_direction_default() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(SETTINGS_FILE_NAME);
+        fs::write(
+            &path,
+            r#"{
+                "version": 2,
+                "incoming": { "enabled": true, "targetLanguage": "xx", "originalVolume": 40 },
+                "outgoing": { "targetLanguage": 7, "outputDeviceId": "cable-input" }
+            }"#,
+        )
+        .unwrap();
+
+        let settings = load(&path);
+
+        assert_eq!(
+            settings.incoming.target_language,
+            IncomingSettings::default().target_language
+        );
+        assert_eq!(
+            settings.outgoing.target_language,
+            OutgoingSettings::default().target_language
+        );
+        // The rest of the file is kept, and it is not treated as corrupt.
+        assert!(settings.incoming.enabled);
+        assert_eq!(settings.incoming.original_volume, 40);
+        assert_eq!(
+            settings.outgoing.output_device_id.as_deref(),
+            Some("cable-input")
+        );
+        assert!(!backup_path(&path).exists());
     }
 
     #[test]

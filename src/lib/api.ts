@@ -40,8 +40,24 @@ export function getAppInfo(): Promise<AppInfo> {
 /** Panel language setting: follow the OS, or a fixed language. */
 export type UiLanguage = "system" | "en" | "es";
 
-/** Language supported by the translator. */
-export type Language = "es" | "en";
+/**
+ * Target language of the translator (its API code). The full list, in display order, is
+ * `LANGUAGES` in `lib/languages.ts`.
+ */
+export type Language =
+  | "es"
+  | "en"
+  | "pt"
+  | "fr"
+  | "ja"
+  | "ru"
+  | "zh"
+  | "de"
+  | "ko"
+  | "hi"
+  | "id"
+  | "vi"
+  | "it";
 
 /** Audio captured by the incoming direction. */
 export type SourceApp =
