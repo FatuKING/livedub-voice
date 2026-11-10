@@ -17,17 +17,12 @@ export const en = {
     infoError: "Could not read app info: {error}",
   },
 
+  // Translator language names come from `Intl.DisplayNames` (see `lib/languages.ts`).
   languages: {
-    /** Language names inside a sentence. */
-    name: {
-      en: "English",
-      es: "Spanish",
-    },
-    /** Language names as a standalone option. */
-    option: {
-      en: "English",
-      es: "Spanish",
-    },
+    /** Source chip of a route: the translator detects the spoken language on its own. */
+    auto: "Auto",
+    /** The auto-detected source inside a sentence ("Any language to Spanish"). */
+    anyName: "Any language",
     route: "{from} to {to}",
   },
 

@@ -15,11 +15,12 @@ A simultaneous interpreter for calls and games. When other people talk (Google M
 ## Scope — v1
 
 - **Platform:** Windows 10 (2004+) and Windows 11 only.
-- **Languages:** Spanish ⇄ English only.
+- **Languages:** any source language (auto-detected by the model) → any target language the model supports: Chinese (`zh`), English (`en`), French (`fr`), German (`de`), Hindi (`hi`), Indonesian (`id`), Italian (`it`), Japanese (`ja`), Korean (`ko`), Portuguese (`pt`), Russian (`ru`), Spanish (`es`), Vietnamese (`vi`). Each direction picks its own target. List from OpenAI's [realtime translation guide](https://developers.openai.com/cookbook/examples/voice_solutions/realtime_translation_guide) (codes from its official sample apps).
+- **Panel (UI) language:** English and Spanish only (separate from the translation languages).
 - **Translation engine:** OpenAI `gpt-realtime-translate` only.
 - **Bring your own key:** each user configures their own OpenAI API key.
 
-Out of scope for v1: macOS/Linux, other languages, voice selection, other AI providers.
+Out of scope for v1: macOS/Linux, panel translations beyond English/Spanish, voice selection, other AI providers.
 
 ## Requirements
 
@@ -28,7 +29,7 @@ Out of scope for v1: macOS/Linux, other languages, voice selection, other AI pro
 1. **Incoming translation:** capture the audio of other participants (a specific app such as Discord/Teams/browser/game, or the whole system minus LiveDub Voice) and play the translation through the user's headphones.
 2. **Outgoing translation:** capture the user's microphone, translate it, and send it to a virtual microphone that the call/game app uses as its input.
 3. **OpenAI configuration:** the user enters and validates their OpenAI API key from the panel.
-4. **Configuration panel:** app (panel) language — System, English or Spanish; API key, language direction, input/output devices, source app to capture, original-audio volume (ducking), start/stop each direction.
+4. **Configuration panel:** app (panel) language — System, English or Spanish; API key, target language of each direction, input/output devices, source app to capture, original-audio volume (ducking), start/stop each direction.
 5. **Usage panel:** minutes translated and estimated cost, per session and historical.
 6. **Live captions:** show the transcript of the translations in the panel.
 7. **README:** how to install and use it (Meet, Teams, Discord, games), license, and how to contribute.
@@ -44,7 +45,7 @@ Out of scope for v1: macOS/Linux, other languages, voice selection, other AI pro
 ## Key technical facts
 
 - **Model:** `gpt-realtime-translate` — WebSocket `wss://api.openai.com/v1/realtime/translations?model=gpt-realtime-translate`.
-  - Target language set via `session.audio.output.language` (`"es"` / `"en"`); source language is auto-detected.
+  - Target language set via `session.audio.output.language` (one of the 13 codes above, e.g. `"es"`); source language is auto-detected. Rust `settings::Language` and panel `src/lib/languages.ts` hold the list; an unknown code in `settings.json` falls back to that direction's default.
   - Auth: `Authorization: Bearer <key>` on the WebSocket handshake. A wrong key does not fail the handshake: the server sends an `error` event with code `invalid_api_key`.
   - Input: PCM16 mono 24 kHz little-endian, base64, via `session.input_audio_buffer.append` (send silence too). Append in 200 ms chunks (4800 samples); shorter chunks are buffered, longer ones split.
   - Output: base64 PCM16 24 kHz mono via `session.output_audio.delta` (chunk length varies), translated text via `session.output_transcript.delta`.

@@ -11,6 +11,24 @@ describe("LanguageRoute", () => {
     expect(route).toHaveTextContent(/^EN.*ES$/);
   });
 
+  it("shows an auto-detected source as Auto", () => {
+    render(<LanguageRoute to="ja" direction="outgoing" />);
+
+    const route = screen.getByRole("img", { name: "Any language to Japanese" });
+    expect(route).toHaveTextContent(/^Auto.*JA$/);
+  });
+
+  it("names the auto-detected source in Spanish", () => {
+    render(<LanguageRoute to="en" direction="incoming" />, {
+      uiLanguage: "es",
+    });
+
+    const route = screen.getByRole("img", {
+      name: "De cualquier idioma a inglés",
+    });
+    expect(route).toHaveTextContent(/^Cualquiera.*EN$/);
+  });
+
   it("uses the direction for its color class", () => {
     const { rerender } = render(
       <LanguageRoute from="es" to="en" direction="outgoing" />,

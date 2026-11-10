@@ -23,7 +23,8 @@ Translation is done by OpenAI's `gpt-realtime-translate` model, using your own A
 
 ## Planned features (v1)
 
-- Spanish ⇄ English translation, in both directions at the same time.
+- Speak and listen in any language: the source language is detected automatically, and you choose what each direction translates into — Chinese, English, French, German, Hindi, Indonesian, Italian, Japanese, Korean, Portuguese, Russian, Spanish or Vietnamese (every output language the model supports). Both directions can run at the same time.
+- Panel available in English and Spanish.
 - Choose which app to listen to (Discord, Teams, a browser, a game…) or capture the whole system.
 - Works with any virtual audio cable for the outgoing microphone.
 - Adjustable volume of the original audio (ducking).

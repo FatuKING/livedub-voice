@@ -14,7 +14,7 @@ LiveDub Voice is about travel between languages. Each translation direction is a
 - **Incoming** (others → you) is the **teal** route.
 - **Outgoing** (you → others) is the **coral** route.
 
-The signature motif is the `LanguageRoute`: two language chips (`EN`, `ES`) joined by a dashed line with a small plane in the middle, in the direction's color. The destination chip is filled ("where you land").
+The signature motif is the `LanguageRoute`: two language chips joined by a dashed line with a small plane in the middle, in the direction's color. The source chip reads `Auto` / `Cualquiera`, since the translator detects the spoken language itself; the destination chip shows the target code (`ES`, `JA`, …) and is filled ("where you land").
 
 Cards have a subtle **boarding-pass** feel: rounded corners, a hairline border, an optional colored stripe on top for a direction and an optional perforated divider. The overall look is **flat and calm**: no gradients, no glow, minimal shadows. The app runs next to games and calls, so it should never compete for attention.
 
@@ -99,23 +99,23 @@ Weights: 400 body, 600 labels and buttons, 700 titles and chips.
 
 Reusable primitives live in [`src/components/`](../src/components). Build new screens from them; add a new primitive there (with its own CSS file) rather than styling a one-off inside a screen.
 
-| Component       | What it is                                                                                     |
-| --------------- | ---------------------------------------------------------------------------------------------- |
-| `Button`        | Variants `primary` (neutral ink), `secondary`, `ghost`, `incoming`, `outgoing`. Optional icon. |
-| `Card`          | Boarding-pass surface. `direction` adds the colored stripe; `eyebrow`, `title`, `aside`.       |
-| `Perforation`   | Dashed tear line with notches, to split a card in two parts.                                   |
-| `Field`         | Label + control + hint wiring (ids, `aria-describedby`). Base of the inputs below.             |
-| `TextField`     | Single-line text input.                                                                        |
-| `SecretField`   | Password-style input with a show/hide toggle, for secrets such as the API key.                 |
-| `Select`        | Native `<select>` with Ruta styling (keeps native keyboard/screen-reader behavior).            |
-| `Slider`        | Range input with its formatted value next to the label; `direction` sets its color.            |
-| `Toggle`        | Switch (`role="switch"` checkbox); `direction` sets its "on" color.                            |
-| `LanguageRoute` | The route motif: `from`, `to`, `direction`, `size`. Announced as "English to Spanish".         |
-| `LevelMeter`    | VU bar on a dB scale (−60 to 0 dBFS) with a peak tick (sun near clipping); `role="meter"`.     |
-| `StatusPill`    | Small state label with a dot. Tones `neutral`, `incoming`, `outgoing`, `sun`, `danger`.        |
-| `Notice`        | Inline message: `info`, `success`, `warning`, `error` (errors use `role="alert"`).             |
-| `PageHeader`    | Screen title and description; the title receives focus after navigation.                       |
-| `LogoMark`      | Two stops (teal, coral) joined by a dashed route.                                              |
+| Component       | What it is                                                                                                                                      |
+| --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Button`        | Variants `primary` (neutral ink), `secondary`, `ghost`, `incoming`, `outgoing`. Optional icon.                                                  |
+| `Card`          | Boarding-pass surface. `direction` adds the colored stripe; `eyebrow`, `title`, `aside`.                                                        |
+| `Perforation`   | Dashed tear line with notches, to split a card in two parts.                                                                                    |
+| `Field`         | Label + control + hint wiring (ids, `aria-describedby`). Base of the inputs below.                                                              |
+| `TextField`     | Single-line text input.                                                                                                                         |
+| `SecretField`   | Password-style input with a show/hide toggle, for secrets such as the API key.                                                                  |
+| `Select`        | Native `<select>` with Ruta styling (keeps native keyboard/screen-reader behavior).                                                             |
+| `Slider`        | Range input with its formatted value next to the label; `direction` sets its color.                                                             |
+| `Toggle`        | Switch (`role="switch"` checkbox); `direction` sets its "on" color.                                                                             |
+| `LanguageRoute` | The route motif: `to`, `direction`, `size`, optional `from` (omitted = auto-detected, shown as "Auto"). Announced as "Any language to Spanish". |
+| `LevelMeter`    | VU bar on a dB scale (−60 to 0 dBFS) with a peak tick (sun near clipping); `role="meter"`.                                                      |
+| `StatusPill`    | Small state label with a dot. Tones `neutral`, `incoming`, `outgoing`, `sun`, `danger`.                                                         |
+| `Notice`        | Inline message: `info`, `success`, `warning`, `error` (errors use `role="alert"`).                                                              |
+| `PageHeader`    | Screen title and description; the title receives focus after navigation.                                                                        |
+| `LogoMark`      | Two stops (teal, coral) joined by a dashed route.                                                                                               |
 
 Icons come from `lucide-react` (ISC), imported one by one so only the icons in use are bundled. Icons next to text are decorative (`aria-hidden`).
 
