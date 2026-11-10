@@ -85,6 +85,44 @@ describe("SettingsForm", () => {
     invokeMock.mockReset();
   });
 
+  it("offers every target language, localized, with English and Spanish on top", async () => {
+    mockCore(defaults, [speakers]);
+
+    render(<SettingsForm />);
+
+    const picker = await screen.findByLabelText("Translate others into");
+    const labels = optionLabels(picker);
+    expect(labels).toHaveLength(13);
+    expect(labels.slice(0, 3)).toEqual(["English", "Spanish", "Chinese"]);
+    expect(labels).toContain("Japanese");
+    expect(
+      screen.getByRole("img", { name: "Any language to Spanish" }),
+    ).toHaveTextContent(/^Auto.*ES$/);
+
+    fireEvent.change(screen.getByLabelText("Translate you into"), {
+      target: { value: "fr" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await screen.findByRole("status");
+    expect(savedSettings().outgoing.targetLanguage).toBe("fr");
+  });
+
+  it("names the target languages in Spanish when the panel is in Spanish", async () => {
+    mockCore(defaults, [speakers]);
+
+    render(<SettingsForm />, { uiLanguage: "es" });
+
+    const picker = await screen.findByLabelText(
+      "Idioma para escuchar a los demás",
+    );
+    const labels = optionLabels(picker);
+    expect(labels.slice(0, 2)).toEqual(["Español", "Inglés"]);
+    expect(labels).toContain("Alemán");
+    expect(
+      screen.getByRole("img", { name: "De cualquier idioma a español" }),
+    ).toHaveTextContent(/^Cualquiera.*ES$/);
+  });
+
   it("loads the settings and saves the edited values", async () => {
     mockCore(defaults, [speakers, cableInput, microphone]);
 

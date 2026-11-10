@@ -17,14 +17,8 @@ export const es: Messages = {
   },
 
   languages: {
-    name: {
-      en: "inglés",
-      es: "español",
-    },
-    option: {
-      en: "Inglés",
-      es: "Español",
-    },
+    auto: "Cualquiera",
+    anyName: "cualquier idioma",
     route: "De {from} a {to}",
   },
 

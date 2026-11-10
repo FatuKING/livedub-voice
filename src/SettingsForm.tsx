@@ -25,7 +25,7 @@ import {
   deviceOptions,
   hasVirtualCable,
 } from "./lib/devices";
-import { languageOptions, sourceLanguageFor } from "./lib/languages";
+import { languageOptions } from "./lib/languages";
 import "./SettingsForm.css";
 
 /**
@@ -35,7 +35,7 @@ import "./SettingsForm.css";
  * field until process listing exists.
  */
 function SettingsForm() {
-  const { t, format, preference } = useI18n();
+  const { t, format, preference, locale } = useI18n();
   const [settings, setSettings] = useState<Settings | null>(null);
   const [error, setError] = useState<Failure | null>(null);
   const [saved, setSaved] = useState(false);
@@ -140,7 +140,6 @@ function SettingsForm() {
             <LanguageRoute
               direction="incoming"
               size="sm"
-              from={sourceLanguageFor(incoming.targetLanguage)}
               to={incoming.targetLanguage}
             />
           }
@@ -154,7 +153,7 @@ function SettingsForm() {
           <Select
             label={t("settings.incoming.targetLanguage")}
             value={incoming.targetLanguage}
-            options={languageOptions(t)}
+            options={languageOptions(locale)}
             onChange={(targetLanguage) => updateIncoming({ targetLanguage })}
           />
           <TextField
@@ -205,7 +204,6 @@ function SettingsForm() {
             <LanguageRoute
               direction="outgoing"
               size="sm"
-              from={sourceLanguageFor(outgoing.targetLanguage)}
               to={outgoing.targetLanguage}
             />
           }
@@ -219,7 +217,7 @@ function SettingsForm() {
           <Select
             label={t("settings.outgoing.targetLanguage")}
             value={outgoing.targetLanguage}
-            options={languageOptions(t)}
+            options={languageOptions(locale)}
             onChange={(targetLanguage) => updateOutgoing({ targetLanguage })}
           />
           <Select

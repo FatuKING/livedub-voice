@@ -88,7 +88,7 @@ pub struct TranscriptionConfig {
 /// `session.audio.output`.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct OutputAudioConfig {
-    /// Target language of the translated audio and transcript (`"es"` / `"en"`).
+    /// Target language of the translated audio and transcript (its API code, e.g. `"es"`).
     pub language: Language,
 }
 
@@ -213,6 +213,12 @@ mod tests {
                 ["language"],
             json!("en")
         );
+        for language in Language::ALL {
+            assert_eq!(
+                to_value(&ClientEvent::session_update(language))["session"]["audio"]["output"]["language"],
+                json!(language.code())
+            );
+        }
     }
 
     #[test]
