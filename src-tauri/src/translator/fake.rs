@@ -241,7 +241,11 @@ async fn echo(delay: Duration, reader: InputReader, outputs: mpsc::Sender<Transl
 
     while let Some((due, chunk)) = delayed.recv().await {
         sleep_until(due).await;
-        if outputs.send(TranslatorOutput::Audio(chunk)).await.is_err() {
+        if outputs
+            .send(TranslatorOutput::Audio(chunk.into()))
+            .await
+            .is_err()
+        {
             input_done.abort();
             return;
         }
@@ -258,7 +262,7 @@ mod tests {
         outputs
             .iter()
             .filter_map(|output| match output {
-                TranslatorOutput::Audio(samples) => Some(samples[0]),
+                TranslatorOutput::Audio(delta) => Some(delta.samples[0]),
                 _ => None,
             })
             .collect()
@@ -298,7 +302,7 @@ mod tests {
         let audio: usize = script
             .iter()
             .map(|step| match &step.output {
-                TranslatorOutput::Audio(samples) => samples.len(),
+                TranslatorOutput::Audio(delta) => delta.samples.len(),
                 _ => 0,
             })
             .sum();
@@ -369,7 +373,10 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(200)).await;
         }
         let first = session.next_output().await.unwrap();
-        assert_eq!(first, TranslatorOutput::Audio(vec![0; CHUNK_SAMPLES]));
+        assert_eq!(
+            first,
+            TranslatorOutput::Audio(vec![0; CHUNK_SAMPLES].into())
+        );
         assert!(started.elapsed() >= delay);
 
         // A partial chunk is flushed on stop.

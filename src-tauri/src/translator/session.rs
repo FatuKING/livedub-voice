@@ -38,8 +38,8 @@ const OUTPUT_QUEUE: usize = 256;
 /// Something the session produced.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TranslatorOutput {
-    /// Translated audio: PCM16 mono 24 kHz samples.
-    Audio(Vec<i16>),
+    /// Translated audio: PCM16 mono 24 kHz samples, with the delta's metadata.
+    Audio(AudioDelta),
     /// Source-language transcript text (append-only delta).
     InputTranscriptDelta(String),
     /// Translated transcript text (append-only delta).
@@ -48,6 +48,28 @@ pub enum TranslatorOutput {
     Error { code: String, message: String },
     /// The session ended. Always the last output.
     Closed,
+}
+
+/// One `session.output_audio.delta`: the decoded samples plus the optional metadata the server
+/// sent with them (kept for diagnostics; the samples are always PCM16 mono 24 kHz).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AudioDelta {
+    pub samples: Vec<i16>,
+    /// `elapsed_ms`: the server's stream-alignment timestamp, when present.
+    pub elapsed_ms: Option<i64>,
+    pub sample_rate: Option<u32>,
+    pub channels: Option<u16>,
+    pub format: Option<String>,
+}
+
+impl From<Vec<i16>> for AudioDelta {
+    /// A delta without metadata.
+    fn from(samples: Vec<i16>) -> Self {
+        Self {
+            samples,
+            ..Self::default()
+        }
+    }
 }
 
 enum Command {
@@ -342,14 +364,28 @@ pub(super) fn handle_event(text: &str) -> Step {
             delta,
             sample_rate,
             channels,
+            format,
+            elapsed_ms,
         } => {
             if sample_rate.is_some_and(|rate| rate != super::pcm::SAMPLE_RATE)
                 || channels.is_some_and(|channels| channels != 1)
+                || format.as_deref().is_some_and(|format| format != "pcm16")
             {
-                tracing::warn!(?sample_rate, ?channels, "unexpected output audio format");
+                tracing::warn!(
+                    ?sample_rate,
+                    ?channels,
+                    ?format,
+                    "unexpected output audio format"
+                );
             }
             match decode_pcm16(&delta) {
-                Ok(samples) => Step::Output(TranslatorOutput::Audio(samples)),
+                Ok(samples) => Step::Output(TranslatorOutput::Audio(AudioDelta {
+                    samples,
+                    elapsed_ms,
+                    sample_rate,
+                    channels,
+                    format,
+                })),
                 Err(error) => {
                     tracing::warn!(%error, "unreadable output audio");
                     Step::Skip
@@ -512,7 +548,7 @@ mod tests {
             vec![
                 TranslatorOutput::InputTranscriptDelta("hola".into()),
                 TranslatorOutput::OutputTranscriptDelta("hello".into()),
-                TranslatorOutput::Audio(vec![7, 8]),
+                TranslatorOutput::Audio(vec![7, 8].into()),
                 TranslatorOutput::Error {
                     code: "boom".into(),
                     message: "bad key [redacted]".into()

@@ -128,7 +128,7 @@ async fn translates_a_wav_file() -> TestResult {
             (None, None) => session.next_output().await,
         };
         match next {
-            Some(TranslatorOutput::Audio(samples)) => translated.extend(samples),
+            Some(TranslatorOutput::Audio(delta)) => translated.extend(delta.samples),
             Some(TranslatorOutput::InputTranscriptDelta(delta)) => input_text.push_str(&delta),
             Some(TranslatorOutput::OutputTranscriptDelta(delta)) => output_text.push_str(&delta),
             Some(TranslatorOutput::Error { code, message }) => {

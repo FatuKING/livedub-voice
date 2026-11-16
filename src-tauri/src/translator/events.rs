@@ -141,13 +141,25 @@ pub enum ServerEvent {
     OutputTranscriptDelta { delta: String },
 
     /// Translated audio: base64 PCM16. Chunk length varies.
+    ///
+    /// Observed with real sessions: a continuous stream of 400 ms deltas (9600 samples at
+    /// 24 kHz mono) paced at real time while audio is appended, **digital silence included**;
+    /// after `session.close` the server flushes the rest as fast as it can, mostly seconds of
+    /// digital silence. The metadata fields are optional and only checked or recorded: a
+    /// strange value never costs the audio.
     #[serde(rename = "session.output_audio.delta")]
     OutputAudioDelta {
         delta: String,
-        #[serde(default)]
+        #[serde(default, deserialize_with = "lenient")]
         sample_rate: Option<u32>,
-        #[serde(default)]
+        #[serde(default, deserialize_with = "lenient")]
         channels: Option<u16>,
+        /// Audio encoding; `"pcm16"` is the only documented value.
+        #[serde(default, deserialize_with = "lenient")]
+        format: Option<String>,
+        /// "Timing metadata for stream alignment" (not an identifier); may be null.
+        #[serde(default, deserialize_with = "lenient_ms")]
+        elapsed_ms: Option<i64>,
     },
 
     /// Any event type this client does not handle.
@@ -185,6 +197,30 @@ pub struct SessionInfo {
     pub id: Option<String>,
     #[serde(default)]
     pub model: Option<String>,
+}
+
+/// An optional metadata field: `None` when missing, null or of an unexpected type, so a
+/// surprising value never makes the whole event (and its audio) unreadable.
+fn lenient<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: serde::de::DeserializeOwned,
+{
+    let value = Option::<serde_json::Value>::deserialize(deserializer)?;
+    Ok(value.and_then(|value| serde_json::from_value(value).ok()))
+}
+
+/// Like [`lenient`] for a millisecond count, also accepting fractional numbers (rounded).
+fn lenient_ms<'de, D>(deserializer: D) -> Result<Option<i64>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = Option::<serde_json::Value>::deserialize(deserializer)?;
+    Ok(value.and_then(|value| {
+        value
+            .as_i64()
+            .or_else(|| value.as_f64().map(|ms| ms.round() as i64))
+    }))
 }
 
 /// Only the `type` field, to log the name of events that could not be parsed.
@@ -346,16 +382,37 @@ mod tests {
                 delta: "AQD//w==".into(),
                 sample_rate: Some(24000),
                 channels: Some(1),
+                format: Some("pcm16".into()),
+                elapsed_ms: Some(1200),
             }
         );
         // Optional fields may be missing.
-        assert!(matches!(
+        assert_eq!(
             parse_server_event(r#"{"type":"session.output_audio.delta","delta":""}"#).unwrap(),
             ServerEvent::OutputAudioDelta {
+                delta: String::new(),
                 sample_rate: None,
-                ..
+                channels: None,
+                format: None,
+                elapsed_ms: None,
             }
-        ));
+        );
+    }
+
+    #[test]
+    fn odd_audio_metadata_never_loses_the_audio() {
+        let text = r#"{"type":"session.output_audio.delta","delta":"AQD//w==",
+            "sample_rate":"24k","channels":null,"format":7,"elapsed_ms":1200.6}"#;
+        assert_eq!(
+            parse_server_event(text).unwrap(),
+            ServerEvent::OutputAudioDelta {
+                delta: "AQD//w==".into(),
+                sample_rate: None,
+                channels: None,
+                format: None,
+                elapsed_ms: Some(1201),
+            }
+        );
     }
 
     #[test]

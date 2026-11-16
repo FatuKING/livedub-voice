@@ -15,7 +15,15 @@
 //!   slightly faster. If the cap is ever reached, the oldest audio goes and it is counted in
 //!   [`dropped_samples`](JitterBuffer::dropped_samples) (and logged);
 //! - [`finish_input`](JitterBuffer::finish_input) plays whatever is left, however short, so the
-//!   tail of the last sentence is heard when the session stops.
+//!   tail of the last sentence is heard when the session stops;
+//! - [`push_delta`](JitterBuffer::push_delta) trims **digital silence** when the buffer is
+//!   behind. `gpt-realtime-translate` streams its output at real time *including* silence (400 ms
+//!   deltas of zeros while nobody speaks), and after `session.close` it flushes many seconds of
+//!   zeros as fast as it can. Queued behind real speech, that silence is pure delay: once more
+//!   than the prebuffer is queued, a silent run keeps at most [`DEFAULT_MIN_PAUSE`] (so
+//!   sentences stay apart) and the rest is skipped, counted in
+//!   [`JitterStats::skipped_silence_samples`]. While the buffer is at or below its target nothing
+//!   is skipped, so real-time playback is untouched.
 //!
 //! [`buffered_samples`](JitterBuffer::buffered_samples) is the input for clock drift
 //! correction: a controller compares it to the prebuffer target and nudges
@@ -35,6 +43,20 @@ pub const DEFAULT_PREBUFFER: Duration = Duration::from_millis(200);
 
 /// Silence after which a dry buffer counts as the end of an utterance and prebuffers again.
 pub const DEFAULT_GAP: Duration = Duration::from_millis(400);
+
+/// Silence kept between two stretches of speech when the buffer is behind.
+pub const DEFAULT_MIN_PAUSE: Duration = Duration::from_millis(300);
+
+/// Largest sample magnitude (about -84 dBFS) that still counts as digital silence.
+pub const SILENCE_PEAK: i16 = 2;
+
+/// Whether `samples` is digital silence (every sample within [`SILENCE_PEAK`]); an empty slice
+/// is.
+pub fn is_digital_silence(samples: &[i16]) -> bool {
+    samples
+        .iter()
+        .all(|&sample| sample.unsigned_abs() <= SILENCE_PEAK.unsigned_abs())
+}
 
 /// Most audio held; beyond it the oldest samples are dropped. Large on purpose: the model often
 /// delivers several seconds at once, and that speech must not be lost.
@@ -71,6 +93,8 @@ pub struct JitterStats {
     pub max_buffered_samples: usize,
     /// Samples received.
     pub pushed_samples: u64,
+    /// Digital silence skipped by [`JitterBuffer::push_delta`] because the buffer was behind.
+    pub skipped_silence_samples: u64,
     /// Real audio samples played.
     pub played_samples: u64,
 }
@@ -89,6 +113,9 @@ pub struct JitterBuffer {
     prebuffer: usize,
     gap: usize,
     max: usize,
+    min_pause: usize,
+    /// Silence queued by [`push_delta`](Self::push_delta) since the last audible delta.
+    silent_run: usize,
     state: State,
     /// Set by [`finish_input`](Self::finish_input): play everything, never prebuffer again.
     draining: bool,
@@ -112,6 +139,8 @@ impl JitterBuffer {
             prebuffer,
             gap: samples_for(DEFAULT_GAP).max(1),
             max,
+            min_pause: samples_for(DEFAULT_MIN_PAUSE),
+            silent_run: 0,
             state: State::Buffering { waited: 0 },
             draining: false,
             stats: JitterStats::default(),
@@ -124,9 +153,40 @@ impl JitterBuffer {
         self
     }
 
+    /// Adds a translated delta as received from the translator, skipping digital silence the
+    /// listener does not need (see the [module docs](self)). Returns how many samples were
+    /// queued.
+    pub fn push_delta(&mut self, samples: &[i16]) -> usize {
+        if !is_digital_silence(samples) {
+            self.silent_run = 0;
+            self.push(samples);
+            return samples.len();
+        }
+        let behind = self.samples.len() > self.prebuffer;
+        let keep = if behind {
+            samples
+                .len()
+                .min(self.min_pause.saturating_sub(self.silent_run))
+        } else {
+            samples.len()
+        };
+        self.silent_run += keep;
+        self.stats.pushed_samples += samples.len() as u64;
+        self.stats.skipped_silence_samples += (samples.len() - keep) as u64;
+        self.queue(&samples[..keep]);
+        keep
+    }
+
     /// Adds translated audio. If the buffer would exceed its maximum, the oldest samples go.
     pub fn push(&mut self, samples: &[i16]) {
         self.stats.pushed_samples += samples.len() as u64;
+        self.queue(samples);
+    }
+
+    fn queue(&mut self, samples: &[i16]) {
+        if samples.is_empty() {
+            return;
+        }
         // Only the newest `max` samples can survive.
         let samples = &samples[samples.len().saturating_sub(self.max)..];
         let overflow = (self.samples.len() + samples.len()).saturating_sub(self.max);
@@ -257,6 +317,7 @@ impl JitterBuffer {
     /// Empties the buffer and waits for a new prebuffer.
     pub fn clear(&mut self) {
         self.samples.clear();
+        self.silent_run = 0;
         self.state = State::Buffering { waited: 0 };
         self.draining = false;
     }
@@ -435,6 +496,147 @@ mod tests {
         assert_eq!(played, 40 * 2400, "everything is played");
         assert_eq!(stats.utterances, 1, "one utterance, no re-prebuffering");
         assert_eq!(stats.dropped_samples, 0);
+    }
+
+    /// A delta of `gpt-realtime-translate`: always 400 ms (9600 samples).
+    const DELTA: usize = 9600;
+    const SPEECH: i16 = 1000;
+
+    /// Feeds `deltas` (arrival time in ms, whether it is speech) to a default buffer through
+    /// [`JitterBuffer::push_delta`], pulled 10 ms at a time for `total_ms`. Returns the buffer and
+    /// the speech samples played.
+    fn simulate_stream(deltas: &[(u64, bool)], total_ms: u64) -> (JitterBuffer, usize) {
+        let mut jitter = JitterBuffer::default();
+        let mut out = [0i16; PULL];
+        let mut next = 0;
+        let mut speech_played = 0;
+        for now in (0..total_ms).step_by(10) {
+            while next < deltas.len() && deltas[next].0 <= now {
+                let value = if deltas[next].1 { SPEECH } else { 0 };
+                jitter.push_delta(&[value; DELTA]);
+                next += 1;
+            }
+            jitter.pull(&mut out);
+            speech_played += out.iter().filter(|&&s| s == SPEECH).count();
+        }
+        (jitter, speech_played)
+    }
+
+    /// The real session behind the bug report (Spanish -> Japanese, 16.4 s of microphone): one
+    /// 400 ms delta every ~400 ms while live, silence included (7 s of silence, 5.2 s of speech,
+    /// 1.6 s of silence, 2.4 s of speech, with arrival jitter), then after `session.close` the
+    /// rest of the speech and 62 silent deltas (24.8 s) every ~70 ms.
+    fn recorded_session() -> (Vec<(u64, bool)>, usize) {
+        let mut deltas = Vec::new();
+        let mut at = 750;
+        let live = [(18, false), (13, true), (4, false), (3, true)];
+        for (count, speech) in live {
+            for i in 0..count {
+                deltas.push((at, speech));
+                at += if i % 2 == 0 { 350 } else { 450 };
+            }
+        }
+        for _ in 0..3 {
+            deltas.push((at, true));
+            at += 70;
+        }
+        for _ in 0..62 {
+            deltas.push((at, false));
+            at += 70;
+        }
+        let speech = deltas.iter().filter(|(_, speech)| *speech).count() * DELTA;
+        (deltas, speech)
+    }
+
+    #[test]
+    fn the_silence_flushed_after_close_does_not_build_a_backlog() {
+        let (deltas, speech) = recorded_session();
+        let (jitter, speech_played) = simulate_stream(&deltas, 30_000);
+        let stats = jitter.stats();
+        assert_eq!(speech_played, speech, "all the speech is played");
+        assert_eq!(stats.dropped_samples, 0);
+        assert_eq!(stats.pushed_samples, (deltas.len() * DELTA) as u64);
+        assert!(
+            stats.max_buffered_ms() < 2_500,
+            "max backlog {} ms",
+            stats.max_buffered_ms()
+        );
+        // Most of the 24.8 s of flushed silence is skipped: all of it while speech is queued,
+        // then whatever arrives faster than real time once the buffer is back at its target.
+        assert!(
+            stats.skipped_silence_samples > (20 * SAMPLE_RATE) as u64,
+            "{} samples skipped",
+            stats.skipped_silence_samples
+        );
+        assert_eq!(jitter.buffered_samples(), 0, "nothing left behind");
+    }
+
+    #[test]
+    fn plain_push_reproduces_the_backlog_of_the_bug_report() {
+        // What the pipeline did before `push_delta`: everything queued, ~25 s behind.
+        let (deltas, _) = recorded_session();
+        let mut jitter = JitterBuffer::default();
+        let mut out = [0i16; PULL];
+        let mut next = 0;
+        for now in (0..30_000).step_by(10) {
+            while next < deltas.len() && deltas[next].0 <= now {
+                let value = if deltas[next].1 { SPEECH } else { 0 };
+                jitter.push(&[value; DELTA]);
+                next += 1;
+            }
+            jitter.pull(&mut out);
+        }
+        assert!(jitter.stats().max_buffered_ms() > 20_000);
+    }
+
+    #[test]
+    fn real_time_silence_is_not_skipped() {
+        // Live: 400 ms deltas every 350-450 ms, half silence, half speech.
+        let deltas: Vec<_> = (0..40u64)
+            .map(|i| (i * 400 + if i % 2 == 0 { 0 } else { 50 }, (i / 5) % 2 == 1))
+            .collect();
+        let speech = deltas.iter().filter(|(_, speech)| *speech).count() * DELTA;
+        let (jitter, speech_played) = simulate_stream(&deltas, 18_000);
+        let stats = jitter.stats();
+        assert_eq!(speech_played, speech);
+        assert_eq!(stats.skipped_silence_samples, 0, "pauses keep their length");
+        assert!(
+            stats.max_buffered_ms() <= 450,
+            "{}",
+            stats.max_buffered_ms()
+        );
+    }
+
+    #[test]
+    fn silence_behind_speech_keeps_a_short_pause() {
+        let mut jitter = JitterBuffer::default();
+        assert_eq!(jitter.push_delta(&[SPEECH; DELTA * 3]), DELTA * 3);
+        // Behind: the first silent delta keeps 300 ms, the next keeps nothing.
+        let pause = samples_for(DEFAULT_MIN_PAUSE);
+        assert_eq!(jitter.push_delta(&[0; DELTA]), pause);
+        assert_eq!(jitter.push_delta(&[1, -2, 0, 2]), 0, "within SILENCE_PEAK");
+        assert_eq!(jitter.push_delta(&[SPEECH; DELTA]), DELTA);
+        assert_eq!(
+            jitter.stats().skipped_silence_samples,
+            (DELTA - pause + 4) as u64
+        );
+
+        let mut out = vec![7i16; DELTA * 3 + pause + DELTA];
+        jitter.pull(&mut out);
+        assert!(out[..DELTA * 3].iter().all(|&s| s == SPEECH));
+        assert!(out[DELTA * 3..DELTA * 3 + pause].iter().all(|&s| s == 0));
+        assert!(out[DELTA * 3 + pause..].iter().all(|&s| s == SPEECH));
+
+        // Not behind any more: silence is queued whole.
+        assert_eq!(jitter.push_delta(&[0; DELTA]), DELTA);
+    }
+
+    #[test]
+    fn digital_silence_detection() {
+        assert!(is_digital_silence(&[]));
+        assert!(is_digital_silence(&[0, 1, -1, 2, -2]));
+        assert!(!is_digital_silence(&[0, 0, 3]));
+        assert!(!is_digital_silence(&[i16::MIN]));
     }
 
     #[test]

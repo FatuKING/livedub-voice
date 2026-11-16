@@ -9,7 +9,9 @@
 //!   than real time are appended back to back);
 //! - `cable.wav`: what was written to the virtual cable, in the cable's rate and channels;
 //! - `events.jsonl`: one JSON object per line with `t_ms` (since start) and `kind`: each 200 ms
-//!   block sent (with its RMS/peak), each output delta (sample count, buffered ms), transcript
+//!   block sent (with its RMS/peak), each output delta (sample count, peak, samples kept after
+//!   the jitter buffer skipped digital silence, buffered ms, and the server's `elapsed_ms`,
+//!   `sample_rate`, `channels` and `format` when present), transcript
 //!   deltas (source and translated text), speech start/end, latency measurements, jitter stats
 //!   every second, the stop sequence and a final summary.
 //!
@@ -23,6 +25,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde_json::{Value, json};
 
+use crate::translator::AudioDelta;
 use crate::translator::pcm::{CHUNK_SAMPLES, SAMPLE_RATE};
 
 /// Environment variable naming the directory sessions are recorded to.
@@ -210,11 +213,18 @@ impl SessionRecorder {
         }
     }
 
-    /// A translated audio delta received at `at`, with what the jitter buffer held after it.
-    pub fn received(&mut self, samples: &[i16], at: Duration, buffered_ms: u64) {
+    /// A translated audio delta received at `at`: `kept` of its samples went to the jitter
+    /// buffer, which then held `buffered_ms`. `received.wav` gets every sample, kept or not.
+    pub fn received(&mut self, delta: &AudioDelta, at: Duration, kept: usize, buffered_ms: u64) {
         if self.failed {
             return;
         }
+        let samples = &delta.samples;
+        let peak = samples
+            .iter()
+            .map(|sample| sample.unsigned_abs())
+            .max()
+            .unwrap_or(0);
         let due = (at.as_secs_f64() * f64::from(SAMPLE_RATE)) as u64;
         let gap = due.saturating_sub(self.received.frames());
         let mut result = self.received.write_silence(gap);
@@ -228,7 +238,13 @@ impl SessionRecorder {
                 "kind": "output_delta",
                 "samples": samples.len(),
                 "ms": samples.len() as u64 * 1000 / u64::from(SAMPLE_RATE),
+                "peak": peak,
+                "kept": kept,
                 "buffered_ms": buffered_ms,
+                "elapsed_ms": delta.elapsed_ms,
+                "sample_rate": delta.sample_rate,
+                "channels": delta.channels,
+                "format": delta.format,
             }),
         );
     }
@@ -418,8 +434,15 @@ mod tests {
 
         recorder.sent(&vec![1000; CHUNK_SAMPLES + 100], Duration::from_millis(200));
         // A delta at 0.5 s, then one at 1.0 s: the gap between them becomes silence.
-        recorder.received(&[7; 2400], Duration::from_millis(500), 100);
-        recorder.received(&[8; 2400], Duration::from_millis(1000), 0);
+        let first = AudioDelta {
+            samples: vec![7; 2400],
+            elapsed_ms: Some(480),
+            sample_rate: Some(24_000),
+            channels: Some(1),
+            format: Some("pcm16".into()),
+        };
+        recorder.received(&first, Duration::from_millis(500), 2400, 100);
+        recorder.received(&vec![8; 2400].into(), Duration::from_millis(1000), 0, 0);
         recorder.cable(&[0.5, -0.5, 0.25, -0.25]);
         recorder.event(Duration::from_secs(2), json!({ "kind": "summary" }));
         assert_eq!(recorder.finish(), session);
@@ -452,14 +475,27 @@ mod tests {
         assert_eq!(events[0]["rms"], json!(0.031));
         assert_eq!(events[1]["t_ms"], json!(500));
         assert_eq!(events[1]["samples"], json!(2400));
+        assert_eq!(events[1]["peak"], json!(7));
+        assert_eq!(events[1]["kept"], json!(2400));
+        assert_eq!(events[1]["elapsed_ms"], json!(480));
+        assert_eq!(events[1]["sample_rate"], json!(24_000));
+        assert_eq!(events[1]["channels"], json!(1));
+        assert_eq!(events[1]["format"], json!("pcm16"));
+        assert_eq!(events[2]["kept"], json!(0));
+        assert_eq!(events[2]["elapsed_ms"], Value::Null);
     }
 
     #[test]
     fn deltas_faster_than_real_time_are_appended() {
         let dir = tempfile::tempdir().unwrap();
         let mut recorder = SessionRecorder::create(dir.path(), 24_000, 1).unwrap();
-        recorder.received(&[1; 24_000], Duration::from_millis(100), 0);
-        recorder.received(&[2; 2400], Duration::from_millis(200), 0);
+        recorder.received(
+            &vec![1; 24_000].into(),
+            Duration::from_millis(100),
+            24_000,
+            0,
+        );
+        recorder.received(&vec![2; 2400].into(), Duration::from_millis(200), 2400, 0);
         let session = recorder.finish();
         let (_, received) = read_wav(&session.join("received.wav"));
         assert_eq!(received.len(), 2400 + 24_000 + 2400);
