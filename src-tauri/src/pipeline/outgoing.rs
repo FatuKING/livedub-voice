@@ -20,15 +20,19 @@
 //! A stop requested by the user is graceful, so the end of the last sentence is not lost: the
 //! state becomes `stopping`, the microphone is replaced by [`TRAILING_SILENCE`] of silence (the
 //! model needs it to finish the sentence), then `session.close` is sent and the outputs are read
-//! until `session.closed`, and finally the jitter buffer plays its tail into the cable. The
-//! whole sequence is capped at [`STOP_DRAIN_LIMIT`]. A fatal error (device gone, key rejected)
-//! tears down at once.
+//! until `session.closed`, and finally the jitter buffer plays its tail into the cable. After
+//! the close the server flushes the translated tail and then seconds of digital silence; once
+//! [`TAIL_SILENCE_DONE`] of it has arrived the translation is over and the pipeline stops
+//! waiting for `session.closed`. The whole sequence is capped at [`STOP_DRAIN_LIMIT`]. A fatal
+//! error (device gone, key rejected) tears down at once.
 //!
 //! # Drift and backlog
 //!
-//! The model often delivers translated speech faster than real time. The jitter buffer keeps all
-//! of it; the output converter then plays slightly faster (see [`drift_adjust`]): up to 2 % for
-//! a small backlog (clock drift), up to [`MAX_CATCH_UP`] (6 %) when seconds are waiting.
+//! The model streams its output at real time, silence included, but may deliver translated
+//! speech faster than that. The jitter buffer keeps all the speech and skips digital silence
+//! queued behind it (keeping a short pause, see [`JitterBuffer::push_delta`]); the output
+//! converter then plays slightly faster (see [`drift_adjust`]): up to 2 % for a small backlog
+//! (clock drift), up to [`MAX_CATCH_UP`] (6 %) when seconds are waiting.
 //!
 //! # Diagnostics
 //!
@@ -58,6 +62,7 @@ use crate::audio::{
 };
 use crate::error::{AppError, AppResult};
 use crate::settings::{Language, OutgoingSettings};
+use crate::translator::jitter::is_digital_silence;
 use crate::translator::pcm::{SAMPLE_RATE, samples_for_ms};
 use crate::translator::{
     AudioInput, JitterBuffer, LiveSession, Translator, TranslatorError, TranslatorOutput,
@@ -87,6 +92,12 @@ const TRAILING_SILENCE: Duration = Duration::from_millis(1500);
 
 /// Longest a graceful stop may take (trailing silence, close, playing the tail).
 const STOP_DRAIN_LIMIT: Duration = Duration::from_secs(10);
+
+/// Digital silence received after `session.close` (audio time, not wall time) after which the
+/// translation counts as finished without waiting for `session.closed`. After the close the
+/// server flushes the translated tail first and then many seconds of zeros, faster than real
+/// time; this is longer than the model's own delay (~4 s), so no speech is cut.
+const TAIL_SILENCE_DONE: Duration = Duration::from_secs(5);
 
 /// Time after the jitter buffer is empty for the playback queue to reach the cable.
 const CABLE_DRAIN_TAIL: Duration = Duration::from_millis(150);
@@ -382,6 +393,8 @@ impl OutgoingPipeline {
             shared: Arc::clone(&shared),
             events,
             last_error: None,
+            silence_run_samples: 0,
+            close_abandoned: false,
         };
         let task = tokio::spawn(supervisor.run(stop_rx));
         Ok(Self {
@@ -443,6 +456,10 @@ struct Supervisor {
     events: EventSink,
     /// The latest non-fatal error, reported if the session then closes.
     last_error: Option<TranslatorError>,
+    /// Digital silence received since the last audible delta.
+    silence_run_samples: usize,
+    /// The stop finished on [`TAIL_SILENCE_DONE`] without waiting for `session.closed`.
+    close_abandoned: bool,
 }
 
 impl Supervisor {
@@ -482,16 +499,27 @@ impl Supervisor {
     fn on_output(&mut self, output: Option<TranslatorOutput>) -> Next {
         let shared = &self.shared;
         match output {
-            Some(TranslatorOutput::Audio(samples)) => {
+            Some(TranslatorOutput::Audio(delta)) => {
                 let at = shared.elapsed();
-                let buffered_ms = {
+                let silent = is_digital_silence(&delta.samples);
+                let (kept, buffered_ms) = {
                     let mut jitter = lock(&shared.jitter);
-                    jitter.push(&samples);
-                    jitter.buffered().as_millis() as u64
+                    let kept = jitter.push_delta(&delta.samples);
+                    (kept, jitter.buffered().as_millis() as u64)
                 };
                 shared.output_deltas.fetch_add(1, Ordering::Relaxed);
-                let latency_events = lock(&shared.latency).on_output(at);
-                shared.record(|recorder| recorder.received(&samples, at, buffered_ms));
+                if silent {
+                    self.silence_run_samples += delta.samples.len();
+                } else {
+                    self.silence_run_samples = 0;
+                }
+                // The model streams silence too: only audible deltas say "translation arrived".
+                let latency_events = if silent {
+                    Vec::new()
+                } else {
+                    lock(&shared.latency).on_output(at)
+                };
+                shared.record(|recorder| recorder.received(&delta, at, kept, buffered_ms));
                 for event in latency_events {
                     shared.latency_event(event);
                 }
@@ -541,6 +569,7 @@ impl Supervisor {
             Playing,
         }
         let mut phase = Phase::Trailing;
+        let tail_silence_done = samples_for_ms(TAIL_SILENCE_DONE.as_millis() as u32);
         loop {
             if phase == Phase::Trailing
                 && (self.shared.input_done.load(Ordering::Relaxed)
@@ -549,6 +578,8 @@ impl Supervisor {
                 self.session.stop();
                 self.shared
                     .record_event(json!({ "kind": "session_close_sent" }));
+                // Only silence the server sends after the close counts as the end.
+                self.silence_run_samples = 0;
                 phase = Phase::Closing;
             }
             if phase == Phase::Playing && self.shared.cable_drained.load(Ordering::Relaxed) {
@@ -571,7 +602,23 @@ impl Supervisor {
                 _ = poll.tick() => {}
                 output = self.session.next_output(), if phase != Phase::Playing => {
                     match self.on_output(output) {
-                        Next::Continue => {}
+                        Next::Continue => {
+                            if phase == Phase::Closing
+                                && self.silence_run_samples >= tail_silence_done
+                            {
+                                // The server is only flushing silence now: the translation is
+                                // over, no need to wait for `session.closed`.
+                                tracing::info!(
+                                    silence_ms = self.silence_run_samples as u64 * 1000
+                                        / u64::from(SAMPLE_RATE),
+                                    "translation tail is silent; not waiting for session.closed"
+                                );
+                                self.shared.record_event(json!({ "kind": "tail_silent" }));
+                                self.close_abandoned = true;
+                                lock(&self.shared.jitter).finish_input();
+                                phase = Phase::Playing;
+                            }
+                        }
                         Next::Fatal(error) => {
                             tracing::warn!(code = error.code(), %error, "translator error while stopping");
                             lock(&self.shared.jitter).finish_input();
@@ -599,23 +646,29 @@ impl Supervisor {
             mut pump,
             shared,
             events,
+            close_abandoned,
             ..
         } = self;
 
         // No more microphone audio.
         stop_streams(vec![input_stream]).await;
-        // After a drained stop the session is already closed and this returns at once.
         let dropped_chunks = session.dropped_chunks();
-        let close_wait = if drained {
-            Duration::from_secs(1)
+        if close_abandoned {
+            // Only silence was left to read: dropping the session ends it.
+            drop(session);
         } else {
-            CLOSE_TIMEOUT
-        };
-        if tokio::time::timeout(close_wait, session.finish())
-            .await
-            .is_err()
-        {
-            tracing::warn!("the translator did not close in time");
+            // After a drained stop the session is already closed and this returns at once.
+            let close_wait = if drained {
+                Duration::from_secs(1)
+            } else {
+                CLOSE_TIMEOUT
+            };
+            if tokio::time::timeout(close_wait, session.finish())
+                .await
+                .is_err()
+            {
+                tracing::warn!("the translator did not close in time");
+            }
         }
         // The pump reports the final audio sent, then the cable stops.
         let _ = tokio::task::spawn_blocking(move || {
@@ -657,6 +710,7 @@ fn log_summary(shared: &Shared, dropped_chunks: u64) {
         sent_bytes = sent * 2,
         received_s = seconds(jitter.pushed_samples),
         received_bytes = jitter.pushed_samples * 2,
+        skipped_silence_s = seconds(jitter.skipped_silence_samples),
         input_dropped_chunks = dropped_chunks,
         "outgoing session summary"
     );
@@ -696,6 +750,8 @@ fn log_summary(shared: &Shared, dropped_chunks: u64) {
         "sent_bytes": sent * 2,
         "received_s": seconds(jitter.pushed_samples),
         "received_bytes": jitter.pushed_samples * 2,
+        "skipped_silence_s": seconds(jitter.skipped_silence_samples),
+        "kept_s": seconds(jitter.pushed_samples - jitter.skipped_silence_samples),
         "input_dropped_chunks": dropped_chunks,
         "latency_start_to_audio": spread(latency.start_to_audio),
         "latency_end_to_audio": spread(latency.end_to_audio),
@@ -1486,7 +1542,9 @@ mod tests {
                     while reader.next_chunk().await.is_some() {}
                     tokio::time::sleep(delay).await;
                     let _ = outputs_tx
-                        .send(TranslatorOutput::Audio(vec![20_000; SAMPLE_RATE as usize]))
+                        .send(TranslatorOutput::Audio(
+                            vec![20_000; SAMPLE_RATE as usize].into(),
+                        ))
                         .await;
                     let _ = outputs_tx.send(TranslatorOutput::Closed).await;
                 });
@@ -1523,6 +1581,109 @@ mod tests {
             .filter(|sample| sample.abs() > 0.5)
             .count();
         assert!(tail > 44_100 * 2 * 95 / 100, "{tail} tail samples played");
+        assert_eq!(
+            states(&recorded.lock().unwrap()),
+            [
+                PipelineState::Connecting,
+                PipelineState::Live,
+                PipelineState::Stopping,
+                PipelineState::Idle
+            ]
+        );
+    }
+
+    /// Behaves like the real `gpt-realtime-translate` server: while the input is open it sends a
+    /// 400 ms delta every 400 ms, digital silence included (deltas 2-4 are speech); after the
+    /// close it flushes the tail (one speech delta) and 62 silent deltas (24.8 s) faster than
+    /// real time, and sends `session.closed` only 10 s later.
+    struct ServerLikeTranslator;
+
+    const SERVER_DELTA: usize = 9600;
+
+    impl Translator for ServerLikeTranslator {
+        fn name(&self) -> &'static str {
+            "server-like"
+        }
+
+        fn start(
+            &self,
+            _target_language: Language,
+        ) -> futures_util::future::BoxFuture<'_, Result<LiveSession, TranslatorError>> {
+            Box::pin(async move {
+                let (input, reader) = input_channel(5);
+                let (outputs_tx, outputs_rx) = mpsc::channel(16);
+                let task = tokio::spawn(async move {
+                    let delta =
+                        |value: i16| TranslatorOutput::Audio(vec![value; SERVER_DELTA].into());
+                    let mut ticker = tokio::time::interval(Duration::from_millis(400));
+                    let mut sent = 0;
+                    loop {
+                        tokio::select! {
+                            chunk = reader.next_chunk() => if chunk.is_none() { break },
+                            _ = ticker.tick() => {
+                                let value = if (2..5).contains(&sent) { 20_000 } else { 0 };
+                                if outputs_tx.send(delta(value)).await.is_err() {
+                                    return;
+                                }
+                                sent += 1;
+                            }
+                        }
+                    }
+                    if outputs_tx.send(delta(20_000)).await.is_err() {
+                        return;
+                    }
+                    for _ in 0..62 {
+                        if outputs_tx.send(delta(0)).await.is_err() {
+                            return;
+                        }
+                        tokio::time::sleep(Duration::from_millis(10)).await;
+                    }
+                    tokio::time::sleep(Duration::from_secs(10)).await;
+                    let _ = outputs_tx.send(TranslatorOutput::Closed).await;
+                });
+                Ok(LiveSession::new(input, outputs_rx, task))
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn server_silence_neither_builds_a_backlog_nor_delays_the_stop() {
+        let io = Arc::new(MemoryIo::new());
+        let (events, recorded) = recorder();
+        let pipeline =
+            OutgoingPipeline::start(config(), Arc::new(ServerLikeTranslator), io.clone(), events)
+                .await
+                .unwrap();
+        let shared = Arc::clone(&pipeline.shared);
+        tokio::time::sleep(Duration::from_millis(2_000)).await;
+        let stopping = Instant::now();
+        pipeline.stop().await;
+        let took = stopping.elapsed();
+
+        // 1.5 s of trailing silence, then the tail and a short pause, not the 10 s wait for
+        // `session.closed` (nor the STOP_DRAIN_LIMIT cap).
+        assert!(took < Duration::from_secs(4), "{took:?}");
+        let stats = lock(&shared.jitter).stats();
+        assert!(
+            stats.max_buffered_ms() < 2_000,
+            "max backlog {} ms",
+            stats.max_buffered_ms()
+        );
+        assert!(stats.skipped_silence_samples > 0);
+        assert_eq!(stats.dropped_samples, 0);
+        // The three live speech deltas and the tail all reached the cable (44.1 kHz stereo).
+        let speech = io
+            .played
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|sample| sample.abs() > 0.5)
+            .count();
+        let expected = 4 * 44_100 * 2 * 400 / 1000;
+        assert!(
+            speech > expected * 95 / 100,
+            "{speech} speech samples played"
+        );
         assert_eq!(
             states(&recorded.lock().unwrap()),
             [

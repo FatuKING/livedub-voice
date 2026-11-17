@@ -186,7 +186,7 @@ mod tests {
         session.push(&vec![1; CHUNK_SAMPLES + 1000]);
         assert_eq!(
             session.next_output().await,
-            Some(TranslatorOutput::Audio(vec![4, 5]))
+            Some(TranslatorOutput::Audio(vec![4, 5].into()))
         );
         session.push(&vec![2; 500]);
 

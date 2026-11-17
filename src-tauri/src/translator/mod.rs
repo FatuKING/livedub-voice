@@ -30,7 +30,9 @@ pub use fake::{FAKE_TRANSLATOR_ENV, FakeMode, FakeTranslator};
 pub use jitter::JitterBuffer;
 pub use live::{AudioInput, LiveSession, Translator};
 pub use openai::OpenAiTranslator;
-pub use session::{AudioSender, TranslatorOutput, TranslatorSession, connect, connect_to};
+pub use session::{
+    AudioDelta, AudioSender, TranslatorOutput, TranslatorSession, connect, connect_to,
+};
 
 /// Translations WebSocket endpoint.
 pub const TRANSLATIONS_URL: &str =

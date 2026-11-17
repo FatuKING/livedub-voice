@@ -18,7 +18,7 @@ use tokio::task::JoinHandle;
 
 use super::TranslatorError;
 use super::pcm::CHUNK_SAMPLES;
-pub use super::session::TranslatorOutput;
+pub use super::session::{AudioDelta, TranslatorOutput};
 use crate::settings::Language;
 
 /// Chunks waiting to be sent before the oldest is dropped (1 s of audio).

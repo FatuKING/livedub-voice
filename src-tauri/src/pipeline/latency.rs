@@ -14,6 +14,10 @@
 //!   at or after that start. Bursts are matched to utterances in order, one each, so audio that
 //!   belongs to the previous sentence is not counted against the next one.
 //!
+//! Only *audible* deltas count as translated audio: `gpt-realtime-translate` streams digital
+//! silence at real time between sentences, so the pipeline feeds [`LatencyTracker::on_output`]
+//! only deltas that are not digital silence.
+//!
 //! Both are estimates: the model translates simultaneously and may merge or split sentences. The
 //! jitter prebuffer and device buffers (a few hundred ms) come on top.
 
