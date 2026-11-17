@@ -103,10 +103,23 @@ export const en = {
       ariaLabel: "Incoming (others → you)",
       enabled: "Translate incoming audio",
       targetLanguage: "Translate others into",
-      sourceApp: "Source app",
+      source: "Translate audio from",
+      sourceSystem: "Whole system",
+      sourceApp: "One app",
+      sourceSystemHint: "Everything playing on this PC except LiveDub Voice.",
+      sourceAppLabel: "App",
       sourceAppHint:
-        "Leave empty to translate the whole system (except LiveDub Voice).",
-      sourceAppPlaceholder: "e.g. Discord.exe",
+        "Includes its helper processes (browser tabs, call windows). Missing? Play something in it and refresh.",
+      sourceAppChoose: "Choose an app…",
+      sourceAppPlaying: "{name} · playing",
+      sourceAppNotRunning: "{name} (not running)",
+      sourceAppNone:
+        "No app is playing audio right now. Play something in the app you want, then refresh.",
+      sourceAppPending:
+        "Until you choose an app, the whole system is translated.",
+      refreshApps: "Refresh apps",
+      refreshingApps: "Refreshing…",
+      appsError: "Could not list the apps playing audio: {error}",
       headphones: "Headphones",
       headphonesHint: "Where you hear the translation.",
       originalVolume: "Original audio volume",
@@ -238,5 +251,7 @@ export const en = {
     no_output_device:
       "No output is chosen for the outgoing translation. Choose the virtual cable in Settings.",
     device_missing: "A device chosen in Settings is not connected ({detail}).",
+    source_app_not_running:
+      "The app chosen in Settings is not running ({detail}). Open it, or translate the whole system.",
   },
 } as const;

@@ -36,6 +36,19 @@ pub struct CaptureStream {
 }
 
 impl CaptureStream {
+    /// Wraps a running stream thread (used by the loopback capture, which shares this type).
+    pub(super) fn from_parts(
+        handle: StreamHandle,
+        format: StreamFormat,
+        level: SharedLevel,
+    ) -> Self {
+        Self {
+            handle,
+            format,
+            level,
+        }
+    }
+
     /// Format of the captured audio (the device's shared-mode mix format). Samples in the queue
     /// are `f32` interleaved at this rate and channel count.
     pub fn format(&self) -> StreamFormat {

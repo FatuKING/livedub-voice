@@ -4,7 +4,8 @@
 //! - **outgoing** ([`outgoing`]): microphone -> translator (to the other side's language) ->
 //!   virtual cable;
 //! - **incoming** (not yet): another app's audio -> translator (to the user's language) ->
-//!   headphones.
+//!   headphones. Its capture is ready: [`AudioIo::open_loopback`] captures the settings' source
+//!   app (or the whole system minus LiveDub Voice) through process loopback.
 //!
 //! A pipeline owns starting and stopping its direction and reports status, input level,
 //! captions and usage through a callback (the Tauri commands forward them to the panel as
@@ -20,6 +21,7 @@ use serde::Serialize;
 use crate::audio::level::SharedLevel;
 use crate::audio::{AudioConsumer, AudioProducer, StreamFormat};
 use crate::error::{AppError, AppResult};
+use crate::settings::SourceApp;
 
 pub use outgoing::{OutgoingConfig, OutgoingEvent, OutgoingPipeline};
 
@@ -148,6 +150,16 @@ pub trait AudioIo: Send + Sync {
     /// Starts playing on `device_id` (`None` = system default) whatever is written to the
     /// returned producer.
     fn open_output(&self, device_id: Option<&str>) -> AppResult<OutputSide>;
+    /// Starts capturing other apps' audio as chosen in `source` (process loopback: one app's
+    /// process tree, or everything except LiveDub Voice). Fails with
+    /// [`AppError::SourceAppNotRunning`] when the chosen app is not running.
+    ///
+    /// Sources that cannot capture apps (test doubles of the outgoing pipeline) keep the default,
+    /// which fails.
+    fn open_loopback(&self, source: &SourceApp) -> AppResult<InputSide> {
+        let _ = source;
+        Err(AppError::Audio("app audio capture is not available".into()))
+    }
 }
 
 /// Audio queued between the pipeline and the playback thread before the oldest is dropped.
@@ -165,6 +177,18 @@ impl AudioIo for WasapiIo {
     fn open_input(&self, device_id: Option<&str>) -> AppResult<InputSide> {
         let (stream, consumer) =
             crate::audio::start_capture(device_id, crate::audio::CaptureConfig::default())?;
+        Ok(InputSide {
+            consumer,
+            format: stream.format(),
+            level: stream.level_handle(),
+            stream: Box::new(stream),
+        })
+    }
+
+    fn open_loopback(&self, source: &SourceApp) -> AppResult<InputSide> {
+        let target = crate::audio::resolve_source(source)?;
+        let (stream, consumer) =
+            crate::audio::start_loopback_capture(target, crate::audio::LoopbackConfig::default())?;
         Ok(InputSide {
             consumer,
             format: stream.format(),

@@ -51,6 +51,10 @@ pub enum AppError {
     #[error("device not found: {0}")]
     DeviceMissing(String),
 
+    /// The app chosen as the incoming source is not running. Holds its executable name.
+    #[error("the source app is not running: {0}")]
+    SourceAppNotRunning(String),
+
     /// An unexpected internal failure that the user cannot act on.
     #[error("internal error: {0}")]
     Internal(String),
@@ -69,6 +73,7 @@ impl AppError {
             Self::Audio(_) => "audio",
             Self::NoOutputDevice => "no_output_device",
             Self::DeviceMissing(_) => "device_missing",
+            Self::SourceAppNotRunning(_) => "source_app_not_running",
             Self::Internal(_) => "internal",
         }
     }
@@ -166,6 +171,13 @@ mod tests {
             json!({
                 "code": "device_missing",
                 "message": "device not found: the microphone is not connected"
+            })
+        );
+        assert_eq!(
+            serde_json::to_value(AppError::SourceAppNotRunning("Discord.exe".into())).unwrap(),
+            json!({
+                "code": "source_app_not_running",
+                "message": "the source app is not running: Discord.exe"
             })
         );
     }

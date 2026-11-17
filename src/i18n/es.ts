@@ -99,10 +99,22 @@ export const es: Messages = {
       ariaLabel: "Entrante (voces de los demás)",
       enabled: "Traducir el audio entrante",
       targetLanguage: "Idioma para escuchar a los demás",
-      sourceApp: "App de origen",
+      source: "Traducir el audio de",
+      sourceSystem: "Todo el sistema",
+      sourceApp: "Una app",
+      sourceSystemHint: "Todo lo que suena en esta PC, excepto LiveDub Voice.",
+      sourceAppLabel: "App",
       sourceAppHint:
-        "Vacío = traducir todo el sistema (excepto LiveDub Voice).",
-      sourceAppPlaceholder: "p. ej. Discord.exe",
+        "Incluye sus procesos auxiliares (pestañas del navegador, ventanas de llamada). Si no aparece, reproducir algo en ella y actualizar.",
+      sourceAppChoose: "Elegir una app…",
+      sourceAppPlaying: "{name} · sonando",
+      sourceAppNotRunning: "{name} (no está abierta)",
+      sourceAppNone:
+        "Ninguna app está reproduciendo audio ahora. Reproducir algo en la app deseada y actualizar.",
+      sourceAppPending: "Hasta elegir una app, se traduce todo el sistema.",
+      refreshApps: "Actualizar apps",
+      refreshingApps: "Actualizando…",
+      appsError: "No se pudieron listar las apps con audio: {error}",
       headphones: "Auriculares",
       headphonesHint: "Donde suena la traducción.",
       originalVolume: "Volumen del audio original",
@@ -235,5 +247,7 @@ export const es: Messages = {
       "No hay ninguna salida elegida para la traducción saliente. El cable virtual se elige en Configuración.",
     device_missing:
       "Un dispositivo elegido en Configuración no está conectado ({detail}).",
+    source_app_not_running:
+      "La app elegida en Configuración no está abierta ({detail}). Abrirla o traducir todo el sistema.",
   },
 };
