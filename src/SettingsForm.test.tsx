@@ -2,7 +2,7 @@ import { fireEvent, screen } from "@testing-library/react";
 import { invoke } from "@tauri-apps/api/core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import SettingsForm from "./SettingsForm";
-import type { AudioDevice, Settings } from "./lib/api";
+import type { AudioApp, AudioDevice, Settings } from "./lib/api";
 import { render } from "./test/i18n";
 
 vi.mock("@tauri-apps/api/core", () => ({
@@ -51,14 +51,35 @@ const microphone: AudioDevice = {
   isVirtualCable: false,
 };
 
+const chrome: AudioApp = {
+  processName: "chrome.exe",
+  displayName: "Google Chrome",
+  pid: 1100,
+  sessionPids: [1102],
+  active: true,
+};
+const discord: AudioApp = {
+  processName: "Discord.exe",
+  displayName: "Discord",
+  pid: 1200,
+  sessionPids: [1201],
+  active: false,
+};
+
 /** Mocks the core: `get_settings` returns `settings`, `save_settings` echoes what it gets. */
-function mockCore(settings: Settings, devices: AudioDevice[]) {
+function mockCore(
+  settings: Settings,
+  devices: AudioDevice[],
+  apps: AudioApp[] = [chrome, discord],
+) {
   invokeMock.mockImplementation((command, args) => {
     switch (command) {
       case "get_settings":
         return Promise.resolve(settings);
       case "list_audio_devices":
         return Promise.resolve(devices);
+      case "list_audio_apps":
+        return Promise.resolve(apps);
       default:
         return Promise.resolve((args as { settings: Settings }).settings);
     }
@@ -132,7 +153,9 @@ describe("SettingsForm", () => {
     fireEvent.change(screen.getByLabelText(/Original audio volume/), {
       target: { value: "35" },
     });
-    fireEvent.change(screen.getByLabelText(/Source app/), {
+    fireEvent.click(screen.getByRole("radio", { name: "One app" }));
+    await screen.findByRole("option", { name: "Discord" });
+    fireEvent.change(screen.getByLabelText("App"), {
       target: { value: "Discord.exe" },
     });
     fireEvent.change(screen.getByLabelText("Translate you into"), {

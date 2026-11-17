@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 
-use crate::audio::{self, AudioDevice, InputLevel, Monitor, MonitorEvent};
+use crate::audio::{self, AudioApp, AudioDevice, InputLevel, Monitor, MonitorEvent};
 use crate::credentials::validation::{KeyValidation, KeyValidator};
 use crate::credentials::{ApiKeyStatus, Credentials};
 use crate::error::{AppError, AppResult};
@@ -123,6 +123,13 @@ pub async fn list_audio_devices() -> AppResult<Vec<AudioDevice>> {
     tauri::async_runtime::spawn_blocking(audio::list_devices)
         .await
         .map_err(|error| AppError::Internal(format!("device listing task failed: {error}")))?
+}
+
+/// Lists the apps that have audio sessions (the incoming direction's possible sources), grouped
+/// by app: playing ones first, then by name. LiveDub Voice itself is never listed.
+#[tauri::command]
+pub async fn list_audio_apps() -> AppResult<Vec<AudioApp>> {
+    run_blocking("audio app listing", audio::list_audio_apps).await
 }
 
 /// Event with the microphone test's input level (`InputLevel`), ~20 times per second.

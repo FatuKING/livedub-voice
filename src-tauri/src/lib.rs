@@ -50,6 +50,7 @@ pub fn run() {
             commands::validate_api_key,
             commands::delete_api_key,
             commands::list_audio_devices,
+            commands::list_audio_apps,
             commands::start_monitor,
             commands::stop_monitor,
             commands::start_outgoing,

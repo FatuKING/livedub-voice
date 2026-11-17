@@ -7,7 +7,6 @@ import Notice from "./components/Notice";
 import Perforation from "./components/Perforation";
 import Select from "./components/Select";
 import Slider from "./components/Slider";
-import TextField from "./components/TextField";
 import Toggle from "./components/Toggle";
 import { useI18n } from "./i18n/context";
 import { failureText, type Failure } from "./i18n/errors";
@@ -19,6 +18,7 @@ import {
   type Settings,
 } from "./lib/api";
 import MicTest from "./MicTest";
+import SourceAppPicker from "./SourceAppPicker";
 import {
   SYSTEM_DEFAULT_VALUE,
   deviceIdFromValue,
@@ -31,8 +31,8 @@ import "./SettingsForm.css";
 /**
  * Settings form: languages, ducking, enabled toggles, devices and source app, grouped per direction.
  *
- * Devices are picked from the list the core reports (refreshable); the source app is a plain text
- * field until process listing exists.
+ * Devices are picked from the list the core reports (refreshable); the incoming source is the
+ * whole system or one of the apps playing audio (see `SourceAppPicker`).
  */
 function SettingsForm() {
   const { t, format, preference, locale } = useI18n();
@@ -122,9 +122,6 @@ function SettingsForm() {
 
   const missingCable = devices !== null && !hasVirtualCable(devices, "output");
 
-  const sourceProcess =
-    incoming.sourceApp.kind === "process" ? incoming.sourceApp.name : "";
-
   return (
     <form
       className="ld-settings"
@@ -156,20 +153,9 @@ function SettingsForm() {
             options={languageOptions(locale)}
             onChange={(targetLanguage) => updateIncoming({ targetLanguage })}
           />
-          <TextField
-            label={t("settings.incoming.sourceApp")}
-            hint={t("settings.incoming.sourceAppHint")}
-            placeholder={t("settings.incoming.sourceAppPlaceholder")}
-            value={sourceProcess}
-            onChange={(event) => {
-              const name = event.target.value;
-              updateIncoming({
-                sourceApp:
-                  name === ""
-                    ? { kind: "allExceptSelf" }
-                    : { kind: "process", name },
-              });
-            }}
+          <SourceAppPicker
+            value={incoming.sourceApp}
+            onChange={(sourceApp) => updateIncoming({ sourceApp })}
           />
           <Select
             label={t("settings.incoming.headphones")}

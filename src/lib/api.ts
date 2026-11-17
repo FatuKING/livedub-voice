@@ -207,6 +207,34 @@ export function listAudioDevices(): Promise<AudioDevice[]> {
 }
 
 /**
+ * An app that has audio sessions: a possible source for the incoming translation.
+ *
+ * Mirrors `AudioApp` in `src-tauri/src/audio/apps.rs`.
+ */
+export interface AudioApp {
+  /** Executable of the app's root process, e.g. `Discord.exe`; what `SourceApp` stores. */
+  processName: string;
+  /** Name to show, e.g. "Google Chrome". */
+  displayName: string;
+  /** Root of the app's process tree (what gets captured). */
+  pid: number;
+  /** Processes of the app that own audio sessions (often its child processes). */
+  sessionPids: number[];
+  /** Whether the app is playing audio right now. */
+  active: boolean;
+}
+
+/**
+ * Lists the apps playing audio (or that have recently), grouped by app with their helper
+ * processes: playing ones first, then by name. LiveDub Voice itself is never listed.
+ *
+ * Rejects with an {@link AppError} (code `"audio"`) when Windows cannot list them.
+ */
+export function listAudioApps(): Promise<AudioApp[]> {
+  return invoke<AudioApp[]>("list_audio_apps");
+}
+
+/**
  * Input level of the microphone test: linear amplitude, 0 (silence) to 1 (full scale).
  *
  * Mirrors `InputLevel` in `src-tauri/src/audio/level.rs`.

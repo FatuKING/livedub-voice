@@ -2120,6 +2120,7 @@ dependencies = [
  "tracing-appender",
  "tracing-subscriber",
  "wasapi",
+ "windows",
  "zeroize",
 ]
 
