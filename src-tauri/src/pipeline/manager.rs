@@ -122,6 +122,15 @@ impl PipelineManager {
         *lock(&slot.stop) = None;
     }
 
+    /// Stops both directions at once (gracefully, like [`stop`](Self::stop)) and waits until
+    /// both have stopped. Used when the spending cap is reached.
+    pub async fn stop_all(&self) {
+        tokio::join!(
+            self.stop(Direction::Incoming),
+            self.stop(Direction::Outgoing)
+        );
+    }
+
     /// `direction`'s latest status.
     pub fn status(&self, direction: Direction) -> PipelineStatus {
         lock(&self.slot(direction).status).clone()

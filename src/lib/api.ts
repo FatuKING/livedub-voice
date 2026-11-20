@@ -89,6 +89,14 @@ export interface OutgoingSettings {
   outputDeviceId: string | null;
 }
 
+/** In-app spending cap, in US dollars; `null` = no cap for that period. Off by default. */
+export interface SpendingCapSettings {
+  /** Most to spend per local calendar day. */
+  dailyUsd: number | null;
+  /** Most to spend per local calendar month. */
+  monthlyUsd: number | null;
+}
+
 /**
  * User settings, as stored in `settings.json`.
  *
@@ -101,6 +109,7 @@ export interface Settings {
   uiLanguage: UiLanguage;
   incoming: IncomingSettings;
   outgoing: OutgoingSettings;
+  spendingCap: SpendingCapSettings;
 }
 
 /** Fetches the current settings from the core. */
@@ -305,7 +314,8 @@ export interface PipelineStatus {
  * Starts translating the microphone into the virtual cable with the saved `outgoing` settings.
  * Does nothing if it already runs.
  *
- * Rejects with an {@link AppError}: `"no_api_key"`, `"no_output_device"`, `"device_missing"`,
+ * Rejects with an {@link AppError}: `"spending_cap_reached"` (the cap is reached; nothing
+ * starts), `"no_api_key"`, `"no_output_device"`, `"device_missing"`,
  * `"audio"`, or a translator code such as `"openai_auth"` or `"network"`.
  */
 export function startOutgoing(): Promise<void> {
@@ -363,7 +373,8 @@ export function onOutgoingAudioSent(
  * headphones with the saved `incoming` settings, ducking the original audio while it runs. Does
  * nothing if it already runs.
  *
- * Rejects with an {@link AppError}: `"no_api_key"`, `"device_missing"`,
+ * Rejects with an {@link AppError}: `"spending_cap_reached"` (the cap is reached; nothing
+ * starts), `"no_api_key"`, `"device_missing"`,
  * `"source_app_not_running"`, `"audio"`, or a translator code such as `"openai_auth"`.
  */
 export function startIncoming(): Promise<void> {
@@ -416,5 +427,96 @@ export function onIncomingAudioSent(
 ): Promise<UnlistenFn> {
   return listen<{ seconds: number }>("incoming-audio-sent", (event) =>
     handler(event.payload.seconds),
+  );
+}
+
+/** Which spending cap a {@link CapStatus} is about. */
+export type CapPeriod = "daily" | "monthly";
+
+/**
+ * How close the estimated spend is to the spending cap: `off` (no cap), `ok`, `warning` (80 % or
+ * more) or `reached` (100 % or more).
+ */
+export type CapLevel = "off" | "ok" | "warning" | "reached";
+
+/**
+ * The spending cap closest to being reached. Mirrors `CapStatus` in
+ * `src-tauri/src/usage/mod.rs`.
+ */
+export interface CapStatus {
+  dailyUsd: number | null;
+  monthlyUsd: number | null;
+  level: CapLevel;
+  /** The cap `level` is about; `null` when no cap is set. */
+  period: CapPeriod | null;
+  /** Estimated spend of that period (today or this month). */
+  spentUsd: number;
+  limitUsd: number | null;
+  /** The user chose to keep translating over the cap for the rest of today. */
+  overriddenToday: boolean;
+}
+
+/** One direction's current (or last) session. */
+export interface SessionUsage {
+  active: boolean;
+  seconds: number;
+  costUsd: number;
+}
+
+/** Usage over a period (today, this month). */
+export interface PeriodUsage {
+  incomingSeconds: number;
+  outgoingSeconds: number;
+  costUsd: number;
+}
+
+/** One day of the usage history. */
+export interface DayUsage {
+  /** Local calendar day, `YYYY-MM-DD`. */
+  date: string;
+  incomingSeconds: number;
+  outgoingSeconds: number;
+  costUsd: number;
+}
+
+/**
+ * Usage metered on this computer (an estimate, not the OpenAI bill). Mirrors `UsageSnapshot` in
+ * `src-tauri/src/usage/mod.rs`.
+ */
+export interface UsageSnapshot {
+  pricePerMinuteUsd: number;
+  session: { incoming: SessionUsage; outgoing: SessionUsage };
+  today: PeriodUsage;
+  month: PeriodUsage;
+  /** Days with usage, newest first. */
+  days: DayUsage[];
+  cap: CapStatus;
+}
+
+/** The usage of the current sessions, today, this month and per day, and the cap status. */
+export function getUsage(): Promise<UsageSnapshot> {
+  return invoke<UsageSnapshot>("get_usage");
+}
+
+/** Keeps translating over the spending cap for the rest of today, resolving with the new usage. */
+export function overrideSpendingCap(): Promise<UsageSnapshot> {
+  return invoke<UsageSnapshot>("override_spending_cap");
+}
+
+/** Calls `handler` whenever the usage changes (about once a second while translating). */
+export function onUsageUpdated(
+  handler: (usage: UsageSnapshot) => void,
+): Promise<UnlistenFn> {
+  return listen<UsageSnapshot>("usage-updated", (event) =>
+    handler(event.payload),
+  );
+}
+
+/** Calls `handler` when the spending cap is reached and the translations are being stopped. */
+export function onSpendingCapReached(
+  handler: (status: CapStatus) => void,
+): Promise<UnlistenFn> {
+  return listen<CapStatus>("spending-cap-reached", (event) =>
+    handler(event.payload),
   );
 }

@@ -82,7 +82,10 @@ function App() {
       <main className="ld-content" ref={contentRef}>
         <div className="ld-content__inner">
           {screen === "home" && (
-            <HomeScreen onOpenSettings={() => navigate("settings")} />
+            <HomeScreen
+              onOpenSettings={() => navigate("settings")}
+              onOpenUsage={() => navigate("usage")}
+            />
           )}
           {screen === "settings" && <SettingsScreen />}
           {screen === "usage" && <UsageScreen />}

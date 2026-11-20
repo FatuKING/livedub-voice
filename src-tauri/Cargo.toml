@@ -37,6 +37,8 @@ futures-util = { version = "0.3", default-features = false, features = ["sink", 
 base64 = "0.22"
 rtrb = "0.4.1"
 rubato = { version = "5", default-features = false }
+# Local dates for the usage history and the spending cap (days and months in the user's time zone).
+chrono = { version = "0.4", default-features = false, features = ["clock", "std", "serde"] }
 
 [dev-dependencies]
 hound = "3.5"

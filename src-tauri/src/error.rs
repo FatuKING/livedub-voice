@@ -3,6 +3,7 @@
 use serde::ser::{Serialize, SerializeStruct, Serializer};
 
 use crate::translator::TranslatorError;
+use crate::usage::CapPeriod;
 
 /// Errors returned by the core.
 ///
@@ -65,6 +66,15 @@ pub enum AppError {
     #[error("the source app is not running: {0}")]
     SourceAppNotRunning(String),
 
+    /// The in-app spending cap is reached (see [`crate::usage`]): a direction may only start
+    /// once the user raises the cap or chooses to keep going today.
+    #[error("the {period} spending cap is reached: spent {spent_usd:.2} of {limit_usd:.2} USD")]
+    SpendingCapReached {
+        period: CapPeriod,
+        spent_usd: f64,
+        limit_usd: f64,
+    },
+
     /// An unexpected internal failure that the user cannot act on.
     #[error("internal error: {0}")]
     Internal(String),
@@ -85,6 +95,7 @@ impl AppError {
             Self::NoOutputDevice => "no_output_device",
             Self::DeviceMissing(_) => "device_missing",
             Self::SourceAppNotRunning(_) => "source_app_not_running",
+            Self::SpendingCapReached { .. } => "spending_cap_reached",
             Self::Internal(_) => "internal",
         }
     }
@@ -211,6 +222,23 @@ mod tests {
             json!({
                 "code": "source_app_not_running",
                 "message": "the source app is not running: Discord.exe"
+            })
+        );
+    }
+
+    #[test]
+    fn spending_cap_error_names_the_period_and_amounts() {
+        let error = AppError::SpendingCapReached {
+            period: CapPeriod::Daily,
+            spent_usd: 1.004,
+            limit_usd: 1.0,
+        };
+
+        assert_eq!(
+            serde_json::to_value(&error).unwrap(),
+            json!({
+                "code": "spending_cap_reached",
+                "message": "the daily spending cap is reached: spent 1.00 of 1.00 USD"
             })
         );
     }

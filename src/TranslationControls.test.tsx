@@ -404,3 +404,83 @@ describe("TranslationControls (incoming)", () => {
     );
   });
 });
+
+describe("TranslationControls and the spending cap", () => {
+  /** `start_outgoing` is refused by the cap until `override_spending_cap` is called. */
+  function mockCap() {
+    let overridden = false;
+    invokeMock.mockImplementation((command) => {
+      switch (command) {
+        case "get_outgoing_status":
+          return Promise.resolve(currentStatus);
+        case "override_spending_cap":
+          overridden = true;
+          return Promise.resolve({});
+        case "start_outgoing":
+          return overridden
+            ? Promise.resolve(undefined)
+            : // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors
+              Promise.reject({
+                code: "spending_cap_reached",
+                message:
+                  "the daily spending cap is reached: spent 1.00 of 1.00 USD",
+              });
+        default:
+          return Promise.resolve(undefined);
+      }
+    });
+  }
+
+  it("asks before starting over the cap, and keeps going today on request", async () => {
+    mockCap();
+    const onOpenUsage = vi.fn();
+    renderControls({ onOpenUsage });
+    await subscribed();
+
+    fireEvent.click(screen.getByRole("button", { name: "Start outgoing" }));
+
+    const question = await screen.findByRole("group", {
+      name: "Spending cap reached",
+    });
+    expect(question).toHaveTextContent(
+      "Your spending cap is reached. Keep translating for the rest of today?",
+    );
+    // Not an error: nothing started.
+    expect(screen.getByText("Off")).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Raise the cap" }));
+    expect(onOpenUsage).toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Keep going today" }));
+
+    await vi.waitFor(() =>
+      expect(invokeMock).toHaveBeenCalledWith("start_outgoing"),
+    );
+    expect(invokeMock).toHaveBeenCalledWith("override_spending_cap");
+    expect(
+      screen.queryByRole("group", { name: "Spending cap reached" }),
+    ).not.toBeInTheDocument();
+    expect(await screen.findByText("Connecting…")).toBeInTheDocument();
+  });
+
+  it("can cancel instead", async () => {
+    mockCap();
+    renderControls();
+    await subscribed();
+
+    fireEvent.click(screen.getByRole("button", { name: "Start outgoing" }));
+    await screen.findByRole("group", { name: "Spending cap reached" });
+    // No Usage screen to open from here.
+    expect(
+      screen.queryByRole("button", { name: "Raise the cap" }),
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+    expect(
+      screen.queryByRole("group", { name: "Spending cap reached" }),
+    ).not.toBeInTheDocument();
+    expect(invokeMock).not.toHaveBeenCalledWith("override_spending_cap");
+  });
+});

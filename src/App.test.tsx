@@ -85,7 +85,9 @@ describe("App", () => {
     fireEvent.click(navItem("Usage"));
     const usageTitle = screen.getByRole("heading", { level: 1, name: "Usage" });
     expect(usageTitle).toHaveFocus();
-    expect(screen.getByText("No usage yet")).toBeInTheDocument();
+    expect(
+      screen.getByText(/This is not your OpenAI bill/),
+    ).toBeInTheDocument();
     expect(navItem("Usage")).toHaveAttribute("aria-current", "page");
     expect(navItem("Home")).not.toHaveAttribute("aria-current");
 
@@ -113,7 +115,7 @@ describe("App", () => {
     invokeMock.mockImplementation((command) => {
       if (command === "get_settings") {
         return Promise.resolve({
-          version: 2,
+          version: 3,
           uiLanguage: "system",
           incoming: {
             enabled: false,
@@ -128,6 +130,7 @@ describe("App", () => {
             inputDeviceId: null,
             outputDeviceId: null,
           },
+          spendingCap: { dailyUsd: null, monthlyUsd: null },
         });
       }
       return new Promise(() => {});

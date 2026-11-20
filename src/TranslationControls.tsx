@@ -8,6 +8,7 @@ import { useT } from "./i18n/context";
 import { translateError } from "./i18n/errors";
 import {
   isAppError,
+  overrideSpendingCap,
   type InputLevel,
   type PipelineState,
   type PipelineStatus,
@@ -43,6 +44,8 @@ export interface TranslationControlsProps {
   /** How to use this direction, under the captions. */
   help: string;
   onOpenSettings: () => void;
+  /** Opens the Usage screen (where the spending cap is raised). */
+  onOpenUsage?: () => void;
 }
 
 /**
@@ -55,6 +58,7 @@ function TranslationControls({
   warning = null,
   help,
   onOpenSettings,
+  onOpenUsage,
 }: TranslationControlsProps) {
   const t = useT();
   const noteId = useId();
@@ -63,6 +67,8 @@ function TranslationControls({
   const [level, setLevel] = useState<InputLevel>(SILENCE);
   const [caption, setCaption] = useState("");
   const [busy, setBusy] = useState(false);
+  /** Start was refused because the spending cap is reached: ask before going on. */
+  const [capBlocked, setCapBlocked] = useState(false);
   const pipeline = PIPELINES[direction];
 
   useEffect(() => {
@@ -101,8 +107,9 @@ function TranslationControls({
   const running = isActive(status.state);
   const reconnect = status.state === "reconnecting" ? status.reconnect : null;
 
-  async function toggle() {
+  async function toggle(overrideCap = false) {
     setBusy(true);
+    setCapBlocked(false);
     try {
       if (running) {
         // The core finishes the last sentence first (up to ~10 s).
@@ -110,11 +117,18 @@ function TranslationControls({
         await pipeline.stop();
         setStatus(IDLE);
       } else {
+        if (overrideCap) await overrideSpendingCap();
         setCaption("");
         setStatus({ state: "connecting", error: null, reconnect: null });
         await pipeline.start();
       }
     } catch (reason: unknown) {
+      if (isAppError(reason) && reason.code === "spending_cap_reached") {
+        // Nothing started: ask whether to go on instead of showing an error.
+        setStatus(IDLE);
+        setCapBlocked(true);
+        return;
+      }
       setStatus({
         state: "error",
         error: isAppError(reason)
@@ -168,6 +182,32 @@ function TranslationControls({
             {t("home.goToSettings")}
           </button>
         </p>
+      )}
+      {capBlocked && !running && (
+        <div
+          className="ld-translation__confirm"
+          role="group"
+          aria-label={t("cap.startBlockedLabel")}
+        >
+          <Notice tone="warning">{t("cap.startBlocked")}</Notice>
+          <div className="ld-route-card__buttons">
+            <Button
+              variant={direction}
+              disabled={busy}
+              onClick={() => void toggle(true)}
+            >
+              {t("cap.continueToday")}
+            </Button>
+            {onOpenUsage && (
+              <Button variant="secondary" onClick={onOpenUsage}>
+                {t("cap.raise")}
+              </Button>
+            )}
+            <Button variant="ghost" onClick={() => setCapBlocked(false)}>
+              {t("cap.cancel")}
+            </Button>
+          </div>
+        </div>
       )}
       {!blocked && warning && <Notice tone="warning">{warning}</Notice>}
       {status.state === "reconnecting" && (

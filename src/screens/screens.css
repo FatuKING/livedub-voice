@@ -73,3 +73,59 @@
 .ld-route-grid--stretch .ld-route-card__actions {
   margin-top: auto;
 }
+
+/* Usage screen. */
+.ld-pass--three {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.ld-usage-period {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.ld-usage-period + .ld-usage-period {
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--color-border);
+}
+
+.ld-usage-period__title {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+}
+
+.ld-usage-table__scroll {
+  overflow-x: auto;
+}
+
+.ld-usage-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--font-size-sm);
+}
+
+.ld-usage-table th,
+.ld-usage-table td {
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--color-border);
+  text-align: right;
+  white-space: nowrap;
+}
+
+.ld-usage-table th:first-child {
+  text-align: left;
+  font-weight: var(--font-weight-semibold);
+}
+
+.ld-usage-table thead th {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+
+.ld-usage-table tbody tr:last-child > * {
+  border-bottom: none;
+}
