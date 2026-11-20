@@ -43,6 +43,21 @@
 //! for `session.closed`. The whole sequence is capped at [`STOP_DRAIN_LIMIT`]. A fatal error
 //! (device gone, captured app closed, key rejected) tears down at once.
 //!
+//! A fast stop ([`TranslationPipeline::shutdown`], or [`StopHandle::stop_now`] while a graceful
+//! stop runs) skips the trailing silence and the tail: it sends `session.close`, waits at most
+//! [`FAST_CLOSE_TIMEOUT`] for the session to end and releases everything. It is used when the
+//! app exits.
+//!
+//! # Reconnecting
+//!
+//! When the session drops on its own (network loss, the server closing the socket, a read or
+//! ping timeout, an expired session) after a retryable error, the pipeline keeps both devices
+//! open and the apps ducked, reports `reconnecting` (attempt n of max) and opens a new session
+//! with backoff (see [`super::reconnect`]). While it reconnects the captured audio is discarded
+//! (never queued: once back, the translation is about what is said now) and the jitter buffer
+//! plays out what had already arrived. A fatal error, a device failure, the attempts running out
+//! or a stop end it.
+//!
 //! # Drift and backlog
 //!
 //! The model streams its output at real time, silence included, but may deliver translated
@@ -59,16 +74,17 @@
 //!
 //! Audio contents are never logged; only levels, sizes and timings are.
 
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::thread::JoinHandle as ThreadHandle;
 use std::time::{Duration, Instant};
 
 use serde_json::json;
-use tokio::sync::oneshot;
+use tokio::sync::Notify;
 use tokio::task::JoinHandle;
 
 use super::latency::{LatencyEvent, LatencyReport, LatencyTracker, SPEECH_RMS};
+use super::reconnect::{ReconnectError, ReconnectPolicy, reconnect};
 use super::recorder::{InputHealth, SessionRecorder};
 use super::{AudioIo, DuckGuard, InputSide, OutputSide, PipelineStatus, StreamGuard};
 use crate::audio::LoopbackTarget;
@@ -120,6 +136,9 @@ const OUTPUT_DRAIN_TAIL: Duration = Duration::from_millis(150);
 
 /// Longest wait for the translator to close after a fatal error or a timed-out stop.
 const CLOSE_TIMEOUT: Duration = Duration::from_secs(3);
+
+/// Longest wait for the translator to close on a fast stop (the app is exiting).
+pub(crate) const FAST_CLOSE_TIMEOUT: Duration = Duration::from_secs(1);
 
 /// Backlog above the prebuffer at which the drift correction reaches [`MAX_RATE_ADJUST`].
 const DRIFT_RANGE_MS: f64 = 1000.0;
@@ -187,6 +206,71 @@ pub struct PipelineConfig {
     /// Volume (percent) the captured apps are ducked to while live; `None` = no ducking. Only
     /// used with [`InputSource::Apps`].
     pub original_volume: Option<u8>,
+    /// How a dropped session is reconnected.
+    pub reconnect: ReconnectPolicy,
+}
+
+/// How a pipeline was asked to stop.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[repr(u8)]
+enum StopMode {
+    /// Finish the last sentence and play its tail (the user pressed Stop).
+    Graceful = 1,
+    /// Close the session and release everything now (the app is exiting).
+    Fast = 2,
+}
+
+/// A stop request shared by the pipeline's owner and its supervisor. Only ever escalates
+/// (running -> graceful -> fast).
+#[derive(Default)]
+struct StopSignal {
+    /// 0 = running, else a [`StopMode`].
+    mode: AtomicU8,
+    changed: Notify,
+}
+
+impl StopSignal {
+    fn request(&self, mode: StopMode) {
+        self.mode.fetch_max(mode as u8, Ordering::SeqCst);
+        self.changed.notify_waiters();
+    }
+
+    fn mode(&self) -> Option<StopMode> {
+        match self.mode.load(Ordering::SeqCst) {
+            0 => None,
+            1 => Some(StopMode::Graceful),
+            _ => Some(StopMode::Fast),
+        }
+    }
+
+    /// Waits until the mode is at least `wanted`.
+    async fn reached(&self, wanted: StopMode) -> StopMode {
+        loop {
+            let changed = self.changed.notified();
+            tokio::pin!(changed);
+            // Registered before checking, so a request in between is not missed.
+            changed.as_mut().enable();
+            if let Some(mode) = self.mode()
+                && mode >= wanted
+            {
+                return mode;
+            }
+            changed.await;
+        }
+    }
+}
+
+/// Asks a pipeline to stop at once (see [`TranslationPipeline::shutdown`]) without owning it,
+/// for example while another task waits for its graceful stop. Cheap to clone.
+#[derive(Clone)]
+pub struct StopHandle(Arc<StopSignal>);
+
+impl StopHandle {
+    /// Turns any stop (or none) into a fast stop: `session.close`, then release everything
+    /// without playing the tail.
+    pub fn stop_now(&self) {
+        self.0.request(StopMode::Fast);
+    }
 }
 
 /// State shared by the pump thread and the supervisor task.
@@ -209,6 +293,9 @@ struct Shared {
     output_deltas: AtomicU64,
     /// The ducked apps (incoming), restored at shutdown.
     ducking: Mutex<Option<Box<dyn DuckGuard>>>,
+    /// Where the pump sends the input: the live session's input, `None` while reconnecting
+    /// (the audio is then discarded).
+    session_input: Mutex<Option<AudioInput>>,
 }
 
 impl Shared {
@@ -227,6 +314,7 @@ impl Shared {
             sent_samples: AtomicU64::new(0),
             output_deltas: AtomicU64::new(0),
             ducking: Mutex::new(None),
+            session_input: Mutex::new(None),
         }
     }
 
@@ -293,7 +381,7 @@ impl Shared {
 /// A running translation, in one direction. Stop it with [`stop`](Self::stop); dropping it also stops it
 /// (in the background).
 pub struct TranslationPipeline {
-    stop: Option<oneshot::Sender<()>>,
+    stop: Arc<StopSignal>,
     task: Option<JoinHandle<()>>,
     shared: Arc<Shared>,
 }
@@ -443,12 +531,13 @@ impl TranslationPipeline {
         }
         *lock(&shared.ducking) = ducking;
 
+        *lock(&shared.session_input) = Some(session.input());
+
         events(PipelineEvent::Status(PipelineStatus::live()));
         let pump = Pump::spawn(PumpParts {
             input: consumer,
             gain,
             to_translator,
-            session_input: session.input(),
             output: producer,
             output_format,
             from_translator,
@@ -467,9 +556,14 @@ impl TranslationPipeline {
             }
         };
 
-        let (stop_tx, stop_rx) = oneshot::channel();
+        let stop = Arc::new(StopSignal::default());
         let supervisor = Supervisor {
-            session,
+            session: Some(session),
+            translator,
+            target_language: config.target_language,
+            policy: config.reconnect,
+            attempts: 0,
+            connected_at: tokio::time::Instant::now(),
             input_stream,
             output_stream,
             pump,
@@ -478,10 +572,11 @@ impl TranslationPipeline {
             last_error: None,
             silence_run_samples: 0,
             close_abandoned: false,
+            dropped_chunks: 0,
         };
-        let task = tokio::spawn(supervisor.run(stop_rx));
+        let task = tokio::spawn(supervisor.run(Arc::clone(&stop)));
         Ok(Self {
-            stop: Some(stop_tx),
+            stop,
             task: Some(task),
             shared,
         })
@@ -512,10 +607,24 @@ impl TranslationPipeline {
 
     /// Stops the pipeline (gracefully: see the module docs) and waits until every device is
     /// released and the translator closed.
-    pub async fn stop(mut self) {
-        if let Some(stop) = self.stop.take() {
-            let _ = stop.send(());
-        }
+    pub async fn stop(self) {
+        self.stop.request(StopMode::Graceful);
+        self.wait().await;
+    }
+
+    /// Stops the pipeline at once (see the module docs: no tail) and waits until every device
+    /// is released and the translator closed. For when the app exits.
+    pub async fn shutdown(self) {
+        self.stop.request(StopMode::Fast);
+        self.wait().await;
+    }
+
+    /// A handle that can turn a stop into a fast one from elsewhere.
+    pub fn stop_handle(&self) -> StopHandle {
+        StopHandle(Arc::clone(&self.stop))
+    }
+
+    async fn wait(mut self) {
         if let Some(task) = self.task.take()
             && let Err(error) = task.await
         {
@@ -532,10 +641,18 @@ impl TranslationPipeline {
 impl Drop for TranslationPipeline {
     fn drop(&mut self) {
         // The supervisor tears down on its own once it sees the stop.
-        if let Some(stop) = self.stop.take() {
-            let _ = stop.send(());
-        }
+        self.stop.request(StopMode::Graceful);
     }
+}
+
+/// How a dropped session ended up.
+enum Reconnected {
+    /// A new session is live.
+    Live,
+    /// A stop was asked for while reconnecting.
+    Stopped,
+    /// The direction cannot go on.
+    Failed(AppError),
 }
 
 /// What to do after an output.
@@ -549,7 +666,15 @@ enum Next {
 
 /// Owns everything while the pipeline is live; see the module docs.
 struct Supervisor {
-    session: LiveSession,
+    /// The live session; `None` while reconnecting.
+    session: Option<LiveSession>,
+    translator: Arc<dyn Translator>,
+    target_language: Language,
+    policy: ReconnectPolicy,
+    /// Reconnect attempts used since the last stable session (see [`super::reconnect`]).
+    attempts: u32,
+    /// When the current session went live.
+    connected_at: tokio::time::Instant,
     input_stream: Box<dyn StreamGuard>,
     output_stream: Box<dyn StreamGuard>,
     pump: Pump,
@@ -561,34 +686,112 @@ struct Supervisor {
     silence_run_samples: usize,
     /// The stop finished on [`TAIL_SILENCE_DONE`] without waiting for `session.closed`.
     close_abandoned: bool,
+    /// Input chunks the sessions that dropped had to discard.
+    dropped_chunks: u64,
 }
 
 impl Supervisor {
-    async fn run(mut self, mut stop: oneshot::Receiver<()>) {
+    async fn run(mut self, stop: Arc<StopSignal>) {
         let mut health = tokio::time::interval(HEALTH_INTERVAL);
-        // `None` = stopped by the user.
-        let failure: Option<AppError> = loop {
-            tokio::select! {
-                _ = &mut stop => break None,
-                _ = health.tick() => {
-                    if let Some(failure) = self.device_failure() {
-                        break Some(AppError::Audio(failure));
+        // `None` = stopped by the user (or the app).
+        let failure: Option<AppError> = 'run: loop {
+            let cause = loop {
+                tokio::select! {
+                    _ = stop.reached(StopMode::Graceful) => break 'run None,
+                    _ = health.tick() => {
+                        if let Some(failure) = self.device_failure() {
+                            break 'run Some(AppError::Audio(failure));
+                        }
+                    }
+                    output = next_output(&mut self.session) => match self.on_output(output) {
+                        Next::Continue => {}
+                        Next::Fatal(error) => break 'run Some(error),
+                        Next::Closed => {
+                            break self.last_error.take().unwrap_or(TranslatorError::Closed);
+                        }
                     }
                 }
-                output = self.session.next_output() => match self.on_output(output) {
-                    Next::Continue => {}
-                    Next::Fatal(error) => break Some(error),
-                    Next::Closed => {
-                        break Some(self.last_error.take().unwrap_or(TranslatorError::Closed).into());
-                    }
-                }
+            };
+            match self.reconnect(&stop, &mut health, cause).await {
+                Reconnected::Live => {}
+                Reconnected::Stopped => break None,
+                Reconnected::Failed(error) => break Some(error),
             }
         };
+        let fast = || stop.mode() == Some(StopMode::Fast);
         let drained = match failure {
-            None => self.drain().await,
-            Some(_) => false,
+            None if !fast() && self.session.is_some() => self.drain(&stop).await,
+            _ => false,
         };
-        self.shutdown(failure, drained).await;
+        // Checked again: a graceful stop may have turned fast while draining.
+        self.shutdown(failure, drained, fast()).await;
+    }
+
+    /// The session dropped after `cause`: keeps the devices open and opens a new session with
+    /// backoff (see the module docs).
+    async fn reconnect(
+        &mut self,
+        stop: &StopSignal,
+        health: &mut tokio::time::Interval,
+        cause: TranslatorError,
+    ) -> Reconnected {
+        let direction = self.shared.direction.name();
+        // The audio said while disconnected is discarded, not queued.
+        *lock(&self.shared.session_input) = None;
+        if let Some(session) = self.session.take() {
+            self.dropped_chunks += session.dropped_chunks();
+        }
+        if self.connected_at.elapsed() >= self.policy.stable_after {
+            self.attempts = 0;
+        }
+        tracing::warn!(direction, code = cause.code(), %cause, "translation session dropped");
+        self.shared
+            .record_event(json!({ "kind": "session_dropped", "code": cause.code() }));
+
+        let events = Arc::clone(&self.events);
+        let max_attempts = self.policy.max_attempts;
+        let attempt = reconnect(
+            Arc::clone(&self.translator),
+            self.target_language,
+            self.policy,
+            self.attempts + 1,
+            cause,
+            move |attempt| {
+                events(PipelineEvent::Status(PipelineStatus::reconnecting(
+                    attempt,
+                    max_attempts,
+                )));
+            },
+        );
+        tokio::pin!(attempt);
+        loop {
+            tokio::select! {
+                _ = stop.reached(StopMode::Graceful) => return Reconnected::Stopped,
+                _ = health.tick() => {
+                    if let Some(failure) = self.device_failure() {
+                        return Reconnected::Failed(AppError::Audio(failure));
+                    }
+                }
+                result = &mut attempt => return match result {
+                    Ok((session, attempt)) => {
+                        self.attempts = attempt;
+                        self.connected_at = tokio::time::Instant::now();
+                        self.last_error = None;
+                        self.silence_run_samples = 0;
+                        *lock(&self.shared.session_input) = Some(session.input());
+                        self.session = Some(session);
+                        self.shared
+                            .record_event(json!({ "kind": "reconnected", "attempt": attempt }));
+                        (self.events)(PipelineEvent::Status(PipelineStatus::live()));
+                        Reconnected::Live
+                    }
+                    Err(ReconnectError::Fatal(error)) => Reconnected::Failed(error.into()),
+                    Err(ReconnectError::Exhausted { attempts, last }) => {
+                        Reconnected::Failed(AppError::ReconnectFailed { attempts, last })
+                    }
+                },
+            }
+        }
     }
 
     fn device_failure(&self) -> Option<String> {
@@ -638,7 +841,7 @@ impl Supervisor {
             Some(TranslatorOutput::Error { code, message }) => {
                 let error = TranslatorError::from_api_error(code, &message);
                 shared.record_event(json!({ "kind": "error", "code": error.code() }));
-                if is_fatal(&error) {
+                if !error.is_retryable() {
                     return Next::Fatal(error.into());
                 }
                 tracing::warn!(code = error.code(), %error, "translator reported an error");
@@ -651,7 +854,7 @@ impl Supervisor {
 
     /// The graceful part of a stop asked by the user. Returns whether everything was played
     /// within [`STOP_DRAIN_LIMIT`].
-    async fn drain(&mut self) -> bool {
+    async fn drain(&mut self, stop: &StopSignal) -> bool {
         (self.events)(PipelineEvent::Status(PipelineStatus::stopping()));
         self.shared
             .record_event(json!({ "kind": "stop_requested" }));
@@ -679,7 +882,9 @@ impl Supervisor {
                 && (self.shared.input_done.load(Ordering::Relaxed)
                     || self.input_stream.failure().is_some())
             {
-                self.session.stop();
+                if let Some(session) = &self.session {
+                    session.stop();
+                }
                 self.shared
                     .record_event(json!({ "kind": "session_close_sent" }));
                 // Only silence the server sends after the close counts as the end.
@@ -695,6 +900,11 @@ impl Supervisor {
                 return false;
             }
             tokio::select! {
+                _ = stop.reached(StopMode::Fast) => {
+                    tracing::info!(?phase, "stopping at once: not playing the rest of the tail");
+                    self.shared.record_event(json!({ "kind": "stop_now", "phase": format!("{phase:?}") }));
+                    return false;
+                }
                 () = tokio::time::sleep_until(deadline) => {
                     tracing::warn!(
                         ?phase,
@@ -705,7 +915,7 @@ impl Supervisor {
                     return false;
                 }
                 _ = poll.tick() => {}
-                output = self.session.next_output(), if phase != Phase::Playing => {
+                output = next_output(&mut self.session), if phase != Phase::Playing => {
                     match self.on_output(output) {
                         Next::Continue => {
                             if phase == Phase::Closing
@@ -743,7 +953,7 @@ impl Supervisor {
     }
 
     /// Tears down in order, logs the session summary and emits the final status.
-    async fn shutdown(self, failure: Option<AppError>, drained: bool) {
+    async fn shutdown(self, failure: Option<AppError>, drained: bool, fast: bool) {
         let Self {
             session,
             input_stream,
@@ -752,27 +962,36 @@ impl Supervisor {
             shared,
             events,
             close_abandoned,
+            dropped_chunks,
             ..
         } = self;
 
         // No more input audio.
+        *lock(&shared.session_input) = None;
         stop_streams(vec![input_stream]).await;
-        let dropped_chunks = session.dropped_chunks();
-        if close_abandoned {
-            // Only silence was left to read: dropping the session ends it.
-            drop(session);
-        } else {
-            // After a drained stop the session is already closed and this returns at once.
-            let close_wait = if drained {
-                Duration::from_secs(1)
-            } else {
-                CLOSE_TIMEOUT
-            };
-            if tokio::time::timeout(close_wait, session.finish())
-                .await
-                .is_err()
-            {
-                tracing::warn!("the translator did not close in time");
+        let mut dropped_chunks = dropped_chunks;
+        match session {
+            None => {}
+            Some(session) if close_abandoned => {
+                // Only silence was left to read: dropping the session ends it.
+                dropped_chunks += session.dropped_chunks();
+                drop(session);
+            }
+            Some(session) => {
+                dropped_chunks += session.dropped_chunks();
+                // After a drained stop the session is already closed and this returns at once.
+                // `finish` sends `session.close` first.
+                let close_wait = if drained || fast {
+                    FAST_CLOSE_TIMEOUT
+                } else {
+                    CLOSE_TIMEOUT
+                };
+                if tokio::time::timeout(close_wait, session.finish())
+                    .await
+                    .is_err()
+                {
+                    tracing::warn!("the translator did not close in time");
+                }
             }
         }
         // The pump reports the final audio sent, then the output stops and, once the translated
@@ -883,12 +1102,12 @@ fn log_summary(shared: &Shared, dropped_chunks: u64) {
     }
 }
 
-/// Errors after which the session cannot go on.
-fn is_fatal(error: &TranslatorError) -> bool {
-    matches!(
-        error,
-        TranslatorError::Auth | TranslatorError::NoModelAccess | TranslatorError::RateLimited
-    )
+/// The next output of `session`; never ready while there is none (reconnecting).
+async fn next_output(session: &mut Option<LiveSession>) -> Option<TranslatorOutput> {
+    match session {
+        Some(session) => session.next_output().await,
+        None => std::future::pending().await,
+    }
 }
 
 /// What the pump thread owns.
@@ -897,7 +1116,6 @@ struct PumpParts {
     /// Ducking compensation for the captured audio (incoming), see the module docs.
     gain: Option<SharedGain>,
     to_translator: ToTranslator,
-    session_input: AudioInput,
     output: AudioProducer,
     output_format: StreamFormat,
     from_translator: FromTranslator,
@@ -991,14 +1209,18 @@ fn run_pump(mut parts: PumpParts) {
             }
             let block_rms = rms(&pcm);
             let at = shared.elapsed();
-            let latency_event = lock(&shared.latency).on_input(block_rms, at);
-            if let Some(event) = latency_event {
-                shared.latency_event(event);
-            }
             if !trailing {
                 lock(&shared.health).sent(&pcm, block_rms >= SPEECH_RMS);
             }
-            if parts.session_input.push(&pcm) {
+            // While reconnecting there is no session: the audio is discarded.
+            let pushed = lock(&shared.session_input)
+                .as_ref()
+                .is_some_and(|input| input.push(&pcm));
+            if pushed {
+                let latency_event = lock(&shared.latency).on_input(block_rms, at);
+                if let Some(event) = latency_event {
+                    shared.latency_event(event);
+                }
                 sent_samples += pcm.len() as u64;
                 shared.sent_samples.store(sent_samples, Ordering::Relaxed);
                 shared.record(|recorder| recorder.sent(&pcm, at));
@@ -1053,6 +1275,11 @@ fn run_pump(mut parts: PumpParts) {
                 let jitter = lock(&shared.jitter);
                 (jitter.stats(), jitter.buffered().as_millis() as u64)
             };
+            let (queued_chunks, dropped_chunks) = lock(&shared.session_input)
+                .as_ref()
+                .map_or((0, 0), |input| {
+                    (input.queued_chunks(), input.dropped_chunks())
+                });
             shared.record_event(json!({
                 "kind": "jitter",
                 "buffered_ms": buffered_ms,
@@ -1060,8 +1287,8 @@ fn run_pump(mut parts: PumpParts) {
                 "dropped_samples": stats.dropped_samples,
                 "utterances": stats.utterances,
                 "rate": (rate * 10_000.0).round() / 10_000.0,
-                "input_queued_chunks": parts.session_input.queued_chunks(),
-                "input_dropped_chunks": parts.session_input.dropped_chunks(),
+                "input_queued_chunks": queued_chunks,
+                "input_dropped_chunks": dropped_chunks,
             }));
             next_sent = now + AUDIO_SENT_INTERVAL;
         }
@@ -1173,370 +1400,16 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::OnceLock;
-
     use tokio::sync::mpsc;
 
-    use std::sync::atomic::AtomicU32;
-
     use super::*;
-    use crate::audio::level::LevelMeter;
-    use crate::audio::{SampleFormat, audio_ring};
     use crate::pipeline::PipelineState;
+    use crate::pipeline::testing::{
+        MemoryIo, Plan, ScriptedTranslator, TestTranslator, discord, incoming_config_from,
+        outgoing_config, quick_reconnect, recorder, states, statuses,
+    };
     use crate::translator::FakeTranslator;
     use crate::translator::live::input_channel;
-
-    fn format(sample_rate: u32, channels: u16) -> StreamFormat {
-        StreamFormat {
-            sample_rate,
-            channels,
-            sample_format: SampleFormat::F32,
-        }
-    }
-
-    /// An in-memory stream: a thread that runs `tick(frames)` at the stream's real-time pace.
-    struct MemoryStream {
-        stop: Arc<AtomicBool>,
-        thread: Option<ThreadHandle<()>>,
-        failure: Arc<OnceLock<String>>,
-        stopped: Arc<AtomicBool>,
-    }
-
-    impl MemoryStream {
-        fn spawn(
-            rate: u32,
-            failure: Arc<OnceLock<String>>,
-            stopped: Arc<AtomicBool>,
-            mut tick: impl FnMut(usize) + Send + 'static,
-        ) -> Self {
-            let stop = Arc::new(AtomicBool::new(false));
-            let thread_stop = Arc::clone(&stop);
-            let thread = std::thread::spawn(move || {
-                let start = Instant::now();
-                let mut done = 0;
-                while !thread_stop.load(Ordering::Relaxed) {
-                    let due = (start.elapsed().as_secs_f64() * f64::from(rate)) as usize;
-                    if due > done {
-                        tick(due - done);
-                        done = due;
-                    }
-                    std::thread::sleep(Duration::from_millis(5));
-                }
-            });
-            Self {
-                stop,
-                thread: Some(thread),
-                failure,
-                stopped,
-            }
-        }
-    }
-
-    impl StreamGuard for MemoryStream {
-        fn failure(&self) -> Option<String> {
-            self.failure.get().cloned()
-        }
-
-        fn stop(&mut self) {
-            self.stop.store(true, Ordering::Relaxed);
-            if let Some(thread) = self.thread.take() {
-                thread.join().unwrap();
-                self.stopped.store(true, Ordering::Relaxed);
-            }
-        }
-    }
-
-    impl Drop for MemoryStream {
-        fn drop(&mut self) {
-            StreamGuard::stop(self);
-        }
-    }
-
-    /// What the fake ducking did.
-    #[derive(Default)]
-    struct DuckLog {
-        /// `duck` calls: target and original volume.
-        started: Vec<(LoopbackTarget, u8)>,
-        /// `set_original_volume` calls.
-        changed: Vec<u8>,
-        /// Whether the output had stopped when the apps were restored.
-        restored_after_output: Option<bool>,
-    }
-
-    /// A "microphone" (or captured app) playing a 440 Hz tone and a "cable" (or headphones) that
-    /// records what it is sent. The app's tone follows its fake session volume, which the fake
-    /// ducking lowers, like process loopback does.
-    struct MemoryIo {
-        input_format: StreamFormat,
-        output_format: StreamFormat,
-        output_opens: bool,
-        app_running: bool,
-        duck_fails: bool,
-        input_failure: Arc<OnceLock<String>>,
-        input_opened: Arc<AtomicBool>,
-        input_stopped: Arc<AtomicBool>,
-        output_stopped: Arc<AtomicBool>,
-        played: Arc<Mutex<Vec<f32>>>,
-        /// The captured app's session volume (f32 bits).
-        app_volume: Arc<AtomicU32>,
-        ducking: Arc<Mutex<DuckLog>>,
-    }
-
-    impl MemoryIo {
-        fn new() -> Self {
-            Self {
-                input_format: format(48_000, 2),
-                output_format: format(44_100, 2),
-                output_opens: true,
-                app_running: true,
-                duck_fails: false,
-                input_failure: Arc::default(),
-                input_opened: Arc::default(),
-                input_stopped: Arc::default(),
-                output_stopped: Arc::default(),
-                played: Arc::default(),
-                app_volume: Arc::new(AtomicU32::new(1.0_f32.to_bits())),
-                ducking: Arc::default(),
-            }
-        }
-
-        fn app_volume(&self) -> f32 {
-            f32::from_bits(self.app_volume.load(Ordering::Relaxed))
-        }
-
-        /// A 440 Hz tone at 0.3 times `volume` (read at every tick).
-        fn tone(&self, volume: Arc<AtomicU32>) -> InputSide {
-            let format = self.input_format;
-            let channels = usize::from(format.channels);
-            let (mut producer, consumer) = audio_ring(format.channels, format.frames_for_ms(200));
-            let level = SharedLevel::default();
-            let mut meter = LevelMeter::new(level.clone(), format.frames_for_ms(50) * channels);
-            let mut phase = 0.0_f32;
-            let step = 440.0 * std::f32::consts::TAU / format.sample_rate as f32;
-            let mut buffer = Vec::new();
-            let stream = MemoryStream::spawn(
-                format.sample_rate,
-                Arc::clone(&self.input_failure),
-                Arc::clone(&self.input_stopped),
-                move |frames| {
-                    let amplitude = 0.3 * f32::from_bits(volume.load(Ordering::Relaxed));
-                    buffer.clear();
-                    for _ in 0..frames {
-                        let sample = amplitude * phase.sin();
-                        phase = (phase + step) % std::f32::consts::TAU;
-                        buffer.extend(std::iter::repeat_n(sample, channels));
-                    }
-                    meter.process(&buffer);
-                    producer.push(&buffer);
-                },
-            );
-            self.input_opened.store(true, Ordering::Relaxed);
-            InputSide {
-                consumer,
-                format,
-                level,
-                stream: Box::new(stream),
-            }
-        }
-
-        /// Played samples louder than the tone's quietest part.
-        fn loud_played_samples(&self) -> usize {
-            self.played
-                .lock()
-                .unwrap()
-                .iter()
-                .filter(|sample| sample.abs() > 0.1)
-                .count()
-        }
-    }
-
-    /// Ducking that sets the fake app's session volume, like the real one.
-    struct FakeDuck {
-        app_volume: Arc<AtomicU32>,
-        gain: SharedGain,
-        output_stopped: Arc<AtomicBool>,
-        log: Arc<Mutex<DuckLog>>,
-    }
-
-    impl DuckGuard for FakeDuck {
-        fn gain(&self) -> SharedGain {
-            self.gain.clone()
-        }
-
-        fn set_original_volume(&self, percent: u8) {
-            let level = crate::audio::ducking::duck_level(percent);
-            self.app_volume.store(level.to_bits(), Ordering::Relaxed);
-            self.gain.set(crate::audio::ducking::capture_gain(level));
-            self.log.lock().unwrap().changed.push(percent);
-        }
-
-        fn stop(&mut self) {
-            self.app_volume.store(1.0_f32.to_bits(), Ordering::Relaxed);
-            self.gain.set(1.0);
-            self.log.lock().unwrap().restored_after_output =
-                Some(self.output_stopped.load(Ordering::Relaxed));
-        }
-    }
-
-    impl AudioIo for MemoryIo {
-        fn open_input(&self, _device_id: Option<&str>) -> AppResult<InputSide> {
-            Ok(self.tone(Arc::new(AtomicU32::new(1.0_f32.to_bits()))))
-        }
-
-        fn resolve_loopback(&self, source: &SourceApp) -> AppResult<LoopbackTarget> {
-            match source {
-                SourceApp::AllExceptSelf => Ok(LoopbackTarget::everything_except_self()),
-                SourceApp::Process { .. } if self.app_running => {
-                    Ok(LoopbackTarget::ProcessTree(4242))
-                }
-                SourceApp::Process { name } => Err(AppError::SourceAppNotRunning(name.clone())),
-            }
-        }
-
-        fn open_loopback(&self, target: LoopbackTarget) -> AppResult<InputSide> {
-            let _ = target;
-            // Captured after the app's volume, like process loopback.
-            Ok(self.tone(Arc::clone(&self.app_volume)))
-        }
-
-        fn duck(
-            &self,
-            target: LoopbackTarget,
-            original_volume: u8,
-        ) -> AppResult<Box<dyn DuckGuard>> {
-            if self.duck_fails {
-                return Err(AppError::Audio("could not lower the original audio".into()));
-            }
-            self.ducking
-                .lock()
-                .unwrap()
-                .started
-                .push((target, original_volume));
-            let level = crate::audio::ducking::duck_level(original_volume);
-            self.app_volume.store(level.to_bits(), Ordering::Relaxed);
-            Ok(Box::new(FakeDuck {
-                app_volume: Arc::clone(&self.app_volume),
-                gain: SharedGain::new(crate::audio::ducking::capture_gain(level)),
-                output_stopped: Arc::clone(&self.output_stopped),
-                log: Arc::clone(&self.ducking),
-            }))
-        }
-
-        fn open_output(&self, _device_id: Option<&str>) -> AppResult<OutputSide> {
-            if !self.output_opens {
-                return Err(AppError::Audio("could not open the output device".into()));
-            }
-            let format = self.output_format;
-            let channels = usize::from(format.channels);
-            let (producer, mut consumer) = audio_ring(format.channels, format.frames_for_ms(200));
-            let played = Arc::clone(&self.played);
-            let mut buffer = Vec::new();
-            let stream = MemoryStream::spawn(
-                format.sample_rate,
-                Arc::default(),
-                Arc::clone(&self.output_stopped),
-                move |frames| {
-                    buffer.resize(frames * channels, 0.0);
-                    let read = consumer.pop(&mut buffer);
-                    played.lock().unwrap().extend_from_slice(&buffer[..read]);
-                },
-            );
-            Ok(OutputSide {
-                producer,
-                format,
-                stream: Box::new(stream),
-            })
-        }
-    }
-
-    /// A translator that sends `outputs` after 200 ms, then waits for the input to close.
-    struct ScriptedTranslator {
-        outputs: Vec<TranslatorOutput>,
-        rejects_key: bool,
-    }
-
-    impl Translator for ScriptedTranslator {
-        fn name(&self) -> &'static str {
-            "scripted"
-        }
-
-        fn start(
-            &self,
-            _target_language: Language,
-        ) -> futures_util::future::BoxFuture<'_, Result<LiveSession, TranslatorError>> {
-            Box::pin(async move {
-                if self.rejects_key {
-                    return Err(TranslatorError::Auth);
-                }
-                let (input, reader) = input_channel(5);
-                let (outputs_tx, outputs_rx) = mpsc::channel(16);
-                let outputs = self.outputs.clone();
-                let task = tokio::spawn(async move {
-                    tokio::time::sleep(Duration::from_millis(200)).await;
-                    for output in outputs {
-                        if outputs_tx.send(output).await.is_err() {
-                            return;
-                        }
-                    }
-                    while reader.next_chunk().await.is_some() {}
-                    let _ = outputs_tx.send(TranslatorOutput::Closed).await;
-                });
-                Ok(LiveSession::new(input, outputs_rx, task))
-            })
-        }
-    }
-
-    fn recorder() -> (EventSink, Arc<Mutex<Vec<PipelineEvent>>>) {
-        let events = Arc::new(Mutex::new(Vec::new()));
-        let sink = Arc::clone(&events);
-        (
-            Arc::new(move |event| sink.lock().unwrap().push(event)),
-            events,
-        )
-    }
-
-    fn statuses(events: &[PipelineEvent]) -> Vec<PipelineStatus> {
-        events
-            .iter()
-            .filter_map(|event| match event {
-                PipelineEvent::Status(status) => Some(status.clone()),
-                _ => None,
-            })
-            .collect()
-    }
-
-    fn states(events: &[PipelineEvent]) -> Vec<PipelineState> {
-        statuses(events)
-            .into_iter()
-            .map(|status| status.state)
-            .collect()
-    }
-
-    fn config() -> PipelineConfig {
-        PipelineConfig {
-            direction: Direction::Outgoing,
-            input: InputSource::Device(Some("mic".into())),
-            output_device_id: Some("cable".into()),
-            target_language: Language::English,
-            original_volume: None,
-        }
-    }
-
-    fn incoming_config(source: SourceApp) -> PipelineConfig {
-        PipelineConfig {
-            direction: Direction::Incoming,
-            input: InputSource::Apps(source),
-            output_device_id: Some("headphones".into()),
-            target_language: Language::Spanish,
-            original_volume: Some(20),
-        }
-    }
-
-    fn discord() -> SourceApp {
-        SourceApp::Process {
-            name: "Discord.exe".into(),
-        }
-    }
 
     async fn wait_until_finished(pipeline: &TranslationPipeline) {
         let deadline = Instant::now() + Duration::from_secs(5);
@@ -1552,9 +1425,10 @@ mod tests {
         let (events, recorded) = recorder();
         let translator = Arc::new(FakeTranslator::echo(Duration::from_millis(100)));
 
-        let pipeline = TranslationPipeline::start(config(), translator, io.clone(), events)
-            .await
-            .unwrap();
+        let pipeline =
+            TranslationPipeline::start(outgoing_config(), translator, io.clone(), events)
+                .await
+                .unwrap();
         tokio::time::sleep(Duration::from_millis(1500)).await;
         let latency = pipeline.latency_report();
         pipeline.stop().await;
@@ -1629,9 +1503,10 @@ mod tests {
             rejects_key: false,
         });
 
-        let pipeline = TranslationPipeline::start(config(), translator, io.clone(), events)
-            .await
-            .unwrap();
+        let pipeline =
+            TranslationPipeline::start(outgoing_config(), translator, io.clone(), events)
+                .await
+                .unwrap();
         wait_until_finished(&pipeline).await;
         pipeline.stop().await;
 
@@ -1669,9 +1544,10 @@ mod tests {
         let (events, recorded) = recorder();
         let translator = Arc::new(FakeTranslator::echo(Duration::from_millis(100)));
 
-        let pipeline = TranslationPipeline::start(config(), translator, io.clone(), events)
-            .await
-            .unwrap();
+        let pipeline =
+            TranslationPipeline::start(outgoing_config(), translator, io.clone(), events)
+                .await
+                .unwrap();
         tokio::time::sleep(Duration::from_millis(300)).await;
         io.input_failure
             .set("the microphone stopped: the device was unplugged or disabled".into())
@@ -1695,7 +1571,7 @@ mod tests {
             rejects_key: true,
         });
 
-        let error = TranslationPipeline::start(config(), translator, io.clone(), events)
+        let error = TranslationPipeline::start(outgoing_config(), translator, io.clone(), events)
             .await
             .err()
             .unwrap();
@@ -1719,7 +1595,7 @@ mod tests {
         let (events, recorded) = recorder();
         let translator = Arc::new(FakeTranslator::echo(Duration::from_millis(100)));
 
-        let error = TranslationPipeline::start(config(), translator, io.clone(), events)
+        let error = TranslationPipeline::start(outgoing_config(), translator, io.clone(), events)
             .await
             .err()
             .unwrap();
@@ -1728,6 +1604,342 @@ mod tests {
         assert!(!io.input_opened.load(Ordering::Relaxed));
         let last = statuses(&recorded.lock().unwrap()).pop().unwrap();
         assert_eq!(last.state, PipelineState::Error);
+    }
+
+    fn network() -> TranslatorError {
+        TranslatorError::Network("connection reset".into())
+    }
+
+    /// Waits until a status matching `wanted` was emitted.
+    async fn wait_for_status(
+        recorded: &Mutex<Vec<PipelineEvent>>,
+        wanted: impl Fn(&PipelineStatus) -> bool,
+    ) {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            if statuses(&recorded.lock().unwrap()).iter().any(&wanted) {
+                return;
+            }
+            assert!(Instant::now() < deadline, "the status never came");
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    }
+
+    #[tokio::test]
+    async fn reconnects_after_a_drop_keeping_the_devices_open() {
+        let io = Arc::new(MemoryIo::new());
+        let (events, recorded) = recorder();
+        let translator = TestTranslator::new(vec![
+            Plan::DropAfter(Duration::from_millis(500), network()),
+            Plan::Fail(network()),
+            Plan::Echo,
+        ]);
+
+        let pipeline =
+            TranslationPipeline::start(outgoing_config(), translator.clone(), io.clone(), events)
+                .await
+                .unwrap();
+        wait_for_status(&recorded, |status| {
+            status
+                .reconnect
+                .is_some_and(|progress| progress.attempt == 2)
+        })
+        .await;
+        let played_before = io.loud_played_samples();
+        // Back live: attempt 2 (50 + 100 ms) opened the third session.
+        tokio::time::sleep(Duration::from_millis(800)).await;
+        let played_after = io.loud_played_samples();
+        pipeline.stop().await;
+
+        // The microphone and the cable were opened once and stayed open.
+        assert_eq!(io.streams_opened(), 2);
+        assert_eq!(io.streams_alive(), 0);
+        assert_eq!(translator.starts(), 3);
+        assert_eq!(translator.live_sessions(), 0);
+        // The translation resumed after the reconnect.
+        assert!(
+            played_after > played_before + 44_100 * 2 / 5,
+            "{played_before} -> {played_after} loud samples"
+        );
+        let statuses = statuses(&recorded.lock().unwrap());
+        assert_eq!(
+            statuses,
+            [
+                PipelineStatus::connecting(),
+                PipelineStatus::live(),
+                PipelineStatus::reconnecting(1, 3),
+                PipelineStatus::reconnecting(2, 3),
+                PipelineStatus::live(),
+                PipelineStatus::stopping(),
+                PipelineStatus::idle(),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn stops_with_reconnect_failed_when_the_attempts_run_out() {
+        let io = Arc::new(MemoryIo::new());
+        let (events, recorded) = recorder();
+        let translator = TestTranslator::new(vec![
+            Plan::DropAfter(Duration::from_millis(300), network()),
+            Plan::Fail(network()),
+            Plan::Fail(TranslatorError::Server("HTTP 503".into())),
+            Plan::Fail(network()),
+        ]);
+
+        let pipeline = TranslationPipeline::start(
+            incoming_config_from(discord()),
+            translator.clone(),
+            io.clone(),
+            events,
+        )
+        .await
+        .unwrap();
+        wait_until_finished(&pipeline).await;
+        pipeline.stop().await;
+
+        assert_eq!(translator.starts(), 4);
+        assert_eq!(io.streams_alive(), 0);
+        // Ducked once for the whole time, restored at the end.
+        assert_eq!(io.ducking.lock().unwrap().started.len(), 1);
+        assert_eq!(io.app_volume(), 1.0);
+        let statuses = statuses(&recorded.lock().unwrap());
+        let last = statuses.last().unwrap();
+        assert_eq!(last.state, PipelineState::Error);
+        let error = last.error.as_ref().unwrap();
+        assert_eq!(error.code, "reconnect_failed");
+        assert!(
+            error.message.contains("after 3 attempts"),
+            "{}",
+            error.message
+        );
+        assert_eq!(
+            statuses
+                .iter()
+                .filter_map(|status| status.reconnect)
+                .map(|progress| progress.attempt)
+                .collect::<Vec<_>>(),
+            [1, 2, 3]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_fatal_error_while_reconnecting_ends_the_direction() {
+        let io = Arc::new(MemoryIo::new());
+        let (events, recorded) = recorder();
+        let translator = TestTranslator::new(vec![
+            Plan::DropAfter(Duration::from_millis(300), network()),
+            Plan::Fail(TranslatorError::QuotaExceeded),
+        ]);
+
+        let pipeline =
+            TranslationPipeline::start(outgoing_config(), translator.clone(), io.clone(), events)
+                .await
+                .unwrap();
+        wait_until_finished(&pipeline).await;
+        pipeline.stop().await;
+
+        assert_eq!(translator.starts(), 2);
+        assert_eq!(io.streams_alive(), 0);
+        let last = statuses(&recorded.lock().unwrap()).pop().unwrap();
+        assert_eq!(last.error.unwrap().code, "openai_quota");
+    }
+
+    #[tokio::test]
+    async fn a_fatal_error_mid_session_is_not_retried() {
+        let io = Arc::new(MemoryIo::new());
+        let (events, recorded) = recorder();
+        let translator = TestTranslator::new(vec![Plan::DropAfter(
+            Duration::from_millis(300),
+            TranslatorError::Auth,
+        )]);
+
+        let pipeline =
+            TranslationPipeline::start(outgoing_config(), translator.clone(), io.clone(), events)
+                .await
+                .unwrap();
+        wait_until_finished(&pipeline).await;
+        pipeline.stop().await;
+
+        assert_eq!(translator.starts(), 1);
+        assert_eq!(
+            states(&recorded.lock().unwrap()),
+            [
+                PipelineState::Connecting,
+                PipelineState::Live,
+                PipelineState::Error
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_rate_limit_error_mid_session_keeps_translating() {
+        let io = Arc::new(MemoryIo::new());
+        let (events, recorded) = recorder();
+        let translator = Arc::new(ScriptedTranslator {
+            outputs: vec![TranslatorOutput::Error {
+                code: "rate_limit_exceeded".into(),
+                message: "Rate limit reached. Please try again in 2s.".into(),
+            }],
+            rejects_key: false,
+        });
+
+        let pipeline =
+            TranslationPipeline::start(outgoing_config(), translator, io.clone(), events)
+                .await
+                .unwrap();
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        assert!(!pipeline.is_finished());
+        pipeline.shutdown().await;
+
+        assert_eq!(
+            states(&recorded.lock().unwrap()),
+            [
+                PipelineState::Connecting,
+                PipelineState::Live,
+                PipelineState::Idle
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_stop_while_reconnecting_is_immediate() {
+        let io = Arc::new(MemoryIo::new());
+        let (events, recorded) = recorder();
+        let translator = TestTranslator::new(vec![
+            Plan::DropAfter(Duration::from_millis(200), network()),
+            Plan::Fail(network()),
+        ]);
+        let config = PipelineConfig {
+            reconnect: ReconnectPolicy {
+                base_delay: Duration::from_secs(5),
+                ..quick_reconnect(3)
+            },
+            ..outgoing_config()
+        };
+
+        let pipeline = TranslationPipeline::start(config, translator.clone(), io.clone(), events)
+            .await
+            .unwrap();
+        wait_for_status(&recorded, |status| status.reconnect.is_some()).await;
+        let stopping = Instant::now();
+        pipeline.stop().await;
+
+        // No session to finish: no trailing silence, no 5 s wait.
+        assert!(stopping.elapsed() < Duration::from_millis(500));
+        assert_eq!(translator.starts(), 1);
+        assert_eq!(translator.live_sessions(), 0);
+        assert_eq!(io.streams_alive(), 0);
+        assert_eq!(
+            states(&recorded.lock().unwrap()),
+            [
+                PipelineState::Connecting,
+                PipelineState::Live,
+                PipelineState::Reconnecting,
+                PipelineState::Idle
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn the_attempt_count_carries_over_a_session_that_did_not_last() {
+        let io = Arc::new(MemoryIo::new());
+        let (events, recorded) = recorder();
+        // Every session drops quickly: the count never starts over, so it runs out.
+        let translator = TestTranslator::new(vec![
+            Plan::DropAfter(Duration::from_millis(200), network()),
+            Plan::DropAfter(Duration::from_millis(200), network()),
+            Plan::DropAfter(Duration::from_millis(200), network()),
+            Plan::DropAfter(Duration::from_millis(200), network()),
+        ]);
+
+        let pipeline =
+            TranslationPipeline::start(outgoing_config(), translator.clone(), io.clone(), events)
+                .await
+                .unwrap();
+        wait_until_finished(&pipeline).await;
+        pipeline.stop().await;
+
+        // The first session and three reconnects (attempts 1, 2, 3), then no attempt left.
+        assert_eq!(translator.starts(), 4);
+        let statuses = statuses(&recorded.lock().unwrap());
+        assert_eq!(
+            statuses
+                .iter()
+                .filter_map(|status| status.reconnect)
+                .map(|progress| progress.attempt)
+                .collect::<Vec<_>>(),
+            [1, 2, 3]
+        );
+        assert_eq!(
+            statuses.last().unwrap().error.as_ref().unwrap().code,
+            "reconnect_failed"
+        );
+    }
+
+    #[tokio::test]
+    async fn shutdown_skips_the_tail() {
+        let io = Arc::new(MemoryIo::new());
+        let (events, recorded) = recorder();
+        let translator = Arc::new(TailTranslator {
+            tail_delay: Duration::from_millis(800),
+        });
+
+        let pipeline =
+            TranslationPipeline::start(outgoing_config(), translator, io.clone(), events)
+                .await
+                .unwrap();
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        let stopping = Instant::now();
+        pipeline.shutdown().await;
+        let took = stopping.elapsed();
+
+        // `session.close` and at most FAST_CLOSE_TIMEOUT for the session to end.
+        assert!(
+            took < FAST_CLOSE_TIMEOUT + Duration::from_millis(400),
+            "{took:?}"
+        );
+        assert_eq!(io.streams_alive(), 0);
+        assert_eq!(
+            states(&recorded.lock().unwrap()),
+            [
+                PipelineState::Connecting,
+                PipelineState::Live,
+                PipelineState::Idle
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn stop_now_cuts_a_graceful_stop_short() {
+        let io = Arc::new(MemoryIo::new());
+        let (events, recorded) = recorder();
+        let translator = Arc::new(FakeTranslator::echo(Duration::from_millis(100)));
+
+        let pipeline =
+            TranslationPipeline::start(outgoing_config(), translator, io.clone(), events)
+                .await
+                .unwrap();
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        let handle = pipeline.stop_handle();
+        let stopping = Instant::now();
+        let stop = tokio::spawn(pipeline.stop());
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        handle.stop_now();
+        stop.await.unwrap();
+
+        // Well before the 1.5 s of trailing silence would have been sent.
+        assert!(stopping.elapsed() < Duration::from_millis(1200));
+        assert_eq!(io.streams_alive(), 0);
+        assert_eq!(
+            states(&recorded.lock().unwrap()),
+            [
+                PipelineState::Connecting,
+                PipelineState::Live,
+                PipelineState::Stopping,
+                PipelineState::Idle
+            ]
+        );
     }
 
     #[test]
@@ -1794,9 +2006,10 @@ mod tests {
             tail_delay: Duration::from_millis(800),
         });
 
-        let pipeline = TranslationPipeline::start(config(), translator, io.clone(), events)
-            .await
-            .unwrap();
+        let pipeline =
+            TranslationPipeline::start(outgoing_config(), translator, io.clone(), events)
+                .await
+                .unwrap();
         tokio::time::sleep(Duration::from_millis(500)).await;
         let stopping = Instant::now();
         pipeline.stop().await;
@@ -1884,7 +2097,7 @@ mod tests {
         let io = Arc::new(MemoryIo::new());
         let (events, recorded) = recorder();
         let pipeline = TranslationPipeline::start(
-            config(),
+            outgoing_config(),
             Arc::new(ServerLikeTranslator),
             io.clone(),
             events,
@@ -1962,10 +2175,14 @@ mod tests {
         let (events, recorded) = recorder();
         let translator = Arc::new(FakeTranslator::echo(Duration::from_millis(100)));
 
-        let pipeline =
-            TranslationPipeline::start(incoming_config(discord()), translator, io.clone(), events)
-                .await
-                .unwrap();
+        let pipeline = TranslationPipeline::start(
+            incoming_config_from(discord()),
+            translator,
+            io.clone(),
+            events,
+        )
+        .await
+        .unwrap();
         assert_eq!(pipeline.direction(), Direction::Incoming);
         tokio::time::sleep(Duration::from_millis(1000)).await;
         // The app plays at 20 % while live.
@@ -2012,7 +2229,7 @@ mod tests {
         let translator = Arc::new(FakeTranslator::echo(Duration::from_millis(100)));
 
         let pipeline = TranslationPipeline::start(
-            incoming_config(SourceApp::AllExceptSelf),
+            incoming_config_from(SourceApp::AllExceptSelf),
             translator,
             io.clone(),
             events,
@@ -2046,11 +2263,15 @@ mod tests {
         let (events, recorded) = recorder();
         let translator = Arc::new(FakeTranslator::echo(Duration::from_millis(100)));
 
-        let error =
-            TranslationPipeline::start(incoming_config(discord()), translator, io.clone(), events)
-                .await
-                .err()
-                .unwrap();
+        let error = TranslationPipeline::start(
+            incoming_config_from(discord()),
+            translator,
+            io.clone(),
+            events,
+        )
+        .await
+        .err()
+        .unwrap();
 
         assert_eq!(error.code(), "source_app_not_running");
         assert!(io.output_stopped.load(Ordering::Relaxed));
@@ -2070,11 +2291,15 @@ mod tests {
             rejects_key: true,
         });
 
-        let error =
-            TranslationPipeline::start(incoming_config(discord()), translator, io.clone(), events)
-                .await
-                .err()
-                .unwrap();
+        let error = TranslationPipeline::start(
+            incoming_config_from(discord()),
+            translator,
+            io.clone(),
+            events,
+        )
+        .await
+        .err()
+        .unwrap();
 
         assert_eq!(error.code(), "openai_auth");
         assert!(io.ducking.lock().unwrap().started.is_empty());
@@ -2093,10 +2318,14 @@ mod tests {
         let (events, recorded) = recorder();
         let translator = Arc::new(FakeTranslator::echo(Duration::from_millis(100)));
 
-        let pipeline =
-            TranslationPipeline::start(incoming_config(discord()), translator, io.clone(), events)
-                .await
-                .unwrap();
+        let pipeline = TranslationPipeline::start(
+            incoming_config_from(discord()),
+            translator,
+            io.clone(),
+            events,
+        )
+        .await
+        .unwrap();
         tokio::time::sleep(Duration::from_millis(1000)).await;
         pipeline.stop().await;
 
@@ -2162,6 +2391,7 @@ mod tests {
                 output_device_id: Some(cable_input),
                 target_language: Language::English,
                 original_volume: None,
+                reconnect: ReconnectPolicy::default(),
             },
             Arc::new(FakeTranslator::echo(Duration::from_millis(300))),
             Arc::new(WasapiIo::default()),
@@ -2276,6 +2506,7 @@ mod tests {
                 output_device_id: None,
                 target_language: Language::Spanish,
                 original_volume: Some(20),
+                reconnect: ReconnectPolicy::default(),
             },
             Arc::new(FakeTranslator::echo(Duration::from_millis(300))),
             Arc::new(WasapiIo::with_ducking_journal(journal.clone())),

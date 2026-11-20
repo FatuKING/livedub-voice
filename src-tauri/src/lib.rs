@@ -36,8 +36,7 @@ pub fn run() {
             app.manage(credentials::Credentials::system());
             app.manage(credentials::validation::KeyValidator::new()?);
             app.manage(commands::MonitorState::default());
-            app.manage(commands::OutgoingState::default());
-            app.manage(commands::IncomingState::default());
+            app.manage(pipeline::PipelineManager::new());
 
             // App volumes a previous run left ducked (it crashed while translating incoming
             // audio) get their volume back.
@@ -49,6 +48,16 @@ pub fn run() {
                 }
             });
             app.manage(commands::DuckingJournal(journal));
+
+            // Ctrl+C in the console (`tauri dev`) closes the app like its window does, so the
+            // translations shut down cleanly instead of the process being killed.
+            let handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                if tokio::signal::ctrl_c().await.is_ok() {
+                    tracing::info!("Ctrl+C: closing LiveDub Voice");
+                    handle.exit(0);
+                }
+            });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -79,14 +88,16 @@ pub fn run() {
             std::process::exit(1);
         }
     };
-    app.run(|app, event| {
-        if let tauri::RunEvent::Exit = event {
-            // Never leave the captured apps ducked: restore them before the process ends.
-            app.state::<commands::IncomingState>().release_ducking();
-            let journal = &app.state::<commands::DuckingJournal>().0;
-            if let Err(error) = audio::ducking::recover(journal) {
-                tracing::warn!(%error, "could not restore the ducked apps on exit");
-            }
+    app.run(|app, event| match event {
+        tauri::RunEvent::ExitRequested { code, .. } => {
+            tracing::info!(?code, "exit requested");
         }
+        tauri::RunEvent::Exit => {
+            // The window closed, Ctrl+C, or anything calling `exit`: close both translations
+            // (session.close, devices released, ducked apps restored) within a bounded time.
+            commands::shut_down_pipelines(app);
+            tracing::info!("LiveDub Voice exiting");
+        }
+        _ => {}
     });
 }

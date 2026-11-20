@@ -13,11 +13,11 @@ import {
   type PipelineStatus,
 } from "./lib/api";
 import type { Direction } from "./lib/languages";
-import { PIPELINES } from "./lib/pipelines";
+import { PIPELINES, isActive } from "./lib/pipelines";
 import "./TranslationControls.css";
 
 const SILENCE: InputLevel = { rms: 0, peak: 0 };
-const IDLE: PipelineStatus = { state: "idle", error: null };
+const IDLE: PipelineStatus = { state: "idle", error: null, reconnect: null };
 
 /** Translated text kept for the caption area (the tail of the session). */
 const MAX_CAPTION_CHARS = 280;
@@ -27,6 +27,7 @@ function tones(direction: Direction): Record<PipelineState, StatusTone> {
     idle: "neutral",
     connecting: "sun",
     live: direction,
+    reconnecting: "sun",
     stopping: "sun",
     error: "danger",
   };
@@ -97,20 +98,20 @@ function TranslationControls({
   }, [pipeline]);
 
   const stopping = status.state === "stopping";
-  const running =
-    status.state === "connecting" || status.state === "live" || stopping;
+  const running = isActive(status.state);
+  const reconnect = status.state === "reconnecting" ? status.reconnect : null;
 
   async function toggle() {
     setBusy(true);
     try {
       if (running) {
         // The core finishes the last sentence first (up to ~10 s).
-        setStatus({ state: "stopping", error: null });
+        setStatus({ state: "stopping", error: null, reconnect: null });
         await pipeline.stop();
         setStatus(IDLE);
       } else {
         setCaption("");
-        setStatus({ state: "connecting", error: null });
+        setStatus({ state: "connecting", error: null, reconnect: null });
         await pipeline.start();
       }
     } catch (reason: unknown) {
@@ -119,6 +120,7 @@ function TranslationControls({
         error: isAppError(reason)
           ? reason
           : { code: "internal", message: String(reason) },
+        reconnect: null,
       });
     } finally {
       setBusy(false);
@@ -146,7 +148,12 @@ function TranslationControls({
           {running ? t(`home.${direction}.stop`) : t(`home.${direction}.start`)}
         </Button>
         <StatusPill tone={tones(direction)[status.state]}>
-          {t(`home.status.${status.state}`)}
+          {reconnect
+            ? t("home.status.reconnectingAttempt", {
+                attempt: reconnect.attempt,
+                max: reconnect.maxAttempts,
+              })
+            : t(`home.status.${status.state}`)}
         </StatusPill>
       </div>
 
@@ -163,6 +170,9 @@ function TranslationControls({
         </p>
       )}
       {!blocked && warning && <Notice tone="warning">{warning}</Notice>}
+      {status.state === "reconnecting" && (
+        <Notice tone="warning">{t(`home.${direction}.reconnecting`)}</Notice>
+      )}
       {status.state === "error" && status.error && (
         <Notice tone="error">
           {t(`home.${direction}.stopped`, {

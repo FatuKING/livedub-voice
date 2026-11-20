@@ -156,6 +156,52 @@ describe("TranslationControls (outgoing)", () => {
     expect(screen.getByText("Off")).toBeInTheDocument();
   });
 
+  it("shows the reconnect attempt and can stop while reconnecting", async () => {
+    currentStatus = { state: "live", error: null };
+    renderControls();
+    await screen.findByText("Live");
+
+    emitStatus({
+      state: "reconnecting",
+      error: null,
+      reconnect: { attempt: 2, maxAttempts: 6 },
+    });
+
+    expect(screen.getByText("Reconnecting 2/6…")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Lost the connection to OpenAI. Reconnecting… Until then others hear nothing from you.",
+    );
+    const stop = screen.getByRole("button", { name: "Stop outgoing" });
+    expect(stop).toBeEnabled();
+
+    emitStatus({ state: "live", error: null, reconnect: null });
+    expect(screen.getByText("Live")).toBeInTheDocument();
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  });
+
+  it("explains a failed reconnect", async () => {
+    currentStatus = { state: "live", error: null };
+    renderControls();
+    await screen.findByText("Live");
+
+    emitStatus({
+      state: "error",
+      error: {
+        code: "reconnect_failed",
+        message:
+          "lost the connection to OpenAI and could not reconnect after 6 attempts: could not reach OpenAI: connection refused",
+      },
+      reconnect: null,
+    });
+
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "The outgoing translation stopped: Lost the connection to OpenAI and could not reconnect (could not reach OpenAI: connection refused). Check your connection and start again.",
+    );
+    expect(
+      screen.getByRole("button", { name: "Start outgoing" }),
+    ).toBeEnabled();
+  });
+
   it("stops and returns to idle", async () => {
     currentStatus = { state: "live", error: null };
     renderControls();

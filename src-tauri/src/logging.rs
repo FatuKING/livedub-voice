@@ -61,6 +61,30 @@ pub fn init(log_dir: &Path) -> AppResult<LogGuard> {
         .with(fmt::layer().with_writer(file_writer).with_ansi(false))
         .try_init()
         .map_err(|error| AppError::Internal(format!("could not install logger: {error}")))?;
+    log_panics();
 
     Ok(LogGuard { _guard: guard })
+}
+
+/// Writes every panic (thread, location, message) to the log before the default report, which
+/// only goes to stderr: a panic in an audio or pipeline thread then leaves a trace in the log
+/// file even when nobody watches the console.
+fn log_panics() {
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let thread = std::thread::current();
+        let payload = info.payload();
+        let message = payload
+            .downcast_ref::<&str>()
+            .copied()
+            .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
+            .unwrap_or("(no message)");
+        tracing::error!(
+            thread = thread.name().unwrap_or("unnamed"),
+            location = info.location().map(ToString::to_string).unwrap_or_default(),
+            message,
+            "panic"
+        );
+        default_hook(info);
+    }));
 }

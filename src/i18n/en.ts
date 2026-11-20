@@ -46,6 +46,8 @@ export const en = {
           "The headphones chosen in Settings are not connected. Plug them in, or choose another output.",
       },
       stopped: "The incoming translation stopped: {error}",
+      reconnecting:
+        "Lost the connection to OpenAI. Reconnecting… Until then the original audio plays at its lowered volume, without translation.",
     },
     outgoing: {
       eyebrow: "Outgoing · you → others",
@@ -66,12 +68,16 @@ export const en = {
           "The output chosen in Settings is not connected. Install or plug in the virtual cable, or choose another output.",
       },
       stopped: "The outgoing translation stopped: {error}",
+      reconnecting:
+        "Lost the connection to OpenAI. Reconnecting… Until then others hear nothing from you.",
     },
     goToSettings: "Go to Settings",
     status: {
       idle: "Off",
       connecting: "Connecting…",
       live: "Live",
+      reconnecting: "Reconnecting…",
+      reconnectingAttempt: "Reconnecting {attempt}/{max}…",
       stopping: "Finishing translation…",
       error: "Error",
     },
@@ -133,6 +139,8 @@ export const en = {
       originalVolume: "Original audio volume",
       originalVolumeHint:
         "How loud the original audio stays under the translation (with Whole system, every app is lowered). It goes back to its volume when the translation stops.",
+      appliesNextStart:
+        "The incoming translation is running. Changes here apply the next time you start it, except the original audio volume, which applies when you save.",
     },
     outgoing: {
       eyebrow: "Outgoing",
@@ -146,6 +154,8 @@ export const en = {
         "Playback side of a virtual cable (e.g. CABLE Input). Pick its recording side as the mic in your call or game.",
       virtualCableMissing:
         "No virtual cable found. Install a virtual cable such as VB-CABLE, then refresh the devices.",
+      appliesNextStart:
+        "The outgoing translation is running. Changes here apply the next time you start it.",
     },
   },
 
@@ -251,7 +261,14 @@ export const en = {
     openai_auth: "OpenAI rejected the API key.",
     openai_no_model_access:
       "This OpenAI account cannot use gpt-realtime-translate.",
-    openai_rate_limited: "OpenAI rate limit or quota reached. Try again later.",
+    openai_rate_limited: "OpenAI rate limit reached. Try again in a minute.",
+    openai_quota:
+      "Your OpenAI account has no credits or quota left. Check billing on platform.openai.com.",
+    openai_unsupported_language:
+      "OpenAI cannot translate into the chosen language. Choose another one in Settings.",
+    openai_server: "OpenAI is having trouble ({detail}). Try again later.",
+    reconnect_failed:
+      "Lost the connection to OpenAI and could not reconnect ({detail}). Check your connection and start again.",
     network: "Could not reach OpenAI ({detail}).",
     openai_protocol: "Unexpected answer from OpenAI ({detail}).",
     openai_api: "OpenAI returned an error ({detail}).",

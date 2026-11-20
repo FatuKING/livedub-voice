@@ -15,7 +15,7 @@ use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 
 use super::events::{ClientEvent, ServerEvent, parse_server_event};
 use super::pcm::{decode_pcm16, encode_pcm16};
-use super::{TRANSLATIONS_URL, TranslatorError, redact_secrets};
+use super::{TRANSLATIONS_URL, TranslatorError, redact_secrets, retry_after_header};
 use crate::credentials::ApiKey;
 use crate::settings::Language;
 
@@ -26,6 +26,31 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// How long to wait for `session.closed` after sending `session.close`.
 const CLOSE_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// Silence from the server after which a live connection counts as lost. While audio is
+/// appended the server streams a delta every ~400 ms (silence included) and answers pings, so
+/// a quiet socket means the network or the server is gone (TCP alone can take minutes to
+/// notice). Also bounds how long one send may take.
+pub(crate) const READ_IDLE_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// How often a WebSocket ping is sent, so the server answers even when it has nothing to say.
+const PING_INTERVAL: Duration = Duration::from_secs(5);
+
+/// How a live connection is watched (see [`READ_IDLE_TIMEOUT`] and [`PING_INTERVAL`]).
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Liveness {
+    pub(crate) read_idle: Duration,
+    pub(crate) ping_interval: Duration,
+}
+
+impl Default for Liveness {
+    fn default() -> Self {
+        Self {
+            read_idle: READ_IDLE_TIMEOUT,
+            ping_interval: PING_INTERVAL,
+        }
+    }
+}
 
 /// Queued audio chunks before [`AudioSender::try_send`] reports the queue as full (800 ms of
 /// 200 ms chunks). Kept short so a stalled socket shows up quickly as backpressure; the live
@@ -169,6 +194,16 @@ pub async fn connect_to(
     api_key: &ApiKey,
     target_language: Language,
 ) -> Result<TranslatorSession, TranslatorError> {
+    connect_with(url, api_key, target_language, Liveness::default()).await
+}
+
+/// Like [`connect_to`], watching the connection with `liveness`.
+pub(crate) async fn connect_with(
+    url: &str,
+    api_key: &ApiKey,
+    target_language: Language,
+    liveness: Liveness,
+) -> Result<TranslatorSession, TranslatorError> {
     let mut request = url
         .into_client_request()
         .map_err(|error| TranslatorError::Protocol(format!("invalid endpoint: {error}")))?;
@@ -194,7 +229,7 @@ pub async fn connect_to(
 
     let (commands_tx, commands_rx) = mpsc::channel(AUDIO_QUEUE);
     let (outputs_tx, outputs_rx) = mpsc::channel(OUTPUT_QUEUE);
-    let task = tokio::spawn(run(socket, commands_rx, outputs_tx));
+    let task = tokio::spawn(run(socket, commands_rx, outputs_tx, liveness));
 
     Ok(TranslatorSession {
         audio: AudioSender {
@@ -209,9 +244,11 @@ pub async fn connect_to(
 /// Maps a failed handshake to a key-free error.
 fn handshake_error(error: tungstenite::Error) -> TranslatorError {
     match error {
-        tungstenite::Error::Http(response) => {
-            TranslatorError::from_handshake_status(response.status().as_u16())
-        }
+        tungstenite::Error::Http(response) => TranslatorError::from_handshake(
+            response.status().as_u16(),
+            response.body().as_deref(),
+            retry_after_header(response.headers()),
+        ),
         tungstenite::Error::Io(error) => TranslatorError::Network(error.to_string()),
         tungstenite::Error::Tls(error) => TranslatorError::Network(format!("TLS error: {error}")),
         tungstenite::Error::Url(error) => {
@@ -243,7 +280,7 @@ async fn setup(
             }
             Ok(ServerEvent::Error { error }) => {
                 return Err(TranslatorError::from_api_error(
-                    error.best_code(),
+                    error.classified_code(),
                     &error.message,
                 ));
             }
@@ -268,16 +305,29 @@ async fn send_event(socket: &mut Socket, event: &ClientEvent) -> Result<(), Tran
 
 /// Pumps audio in and outputs out until the session ends, then closes the socket and reports
 /// [`TranslatorOutput::Closed`].
+///
+/// A lost connection ends the session with a `network` [`TranslatorOutput::Error`] before
+/// `Closed`: a socket error, the server closing the socket unasked, a send that does not
+/// finish within `liveness.read_idle`, or no message at all from the server (not even a pong)
+/// for `liveness.read_idle`.
 async fn run(
     mut socket: Socket,
     mut commands: mpsc::Receiver<Command>,
     outputs: mpsc::Sender<TranslatorOutput>,
+    liveness: Liveness,
 ) {
+    let Liveness {
+        read_idle,
+        ping_interval,
+    } = liveness;
     // Set once `session.close` is sent: stop taking audio and wait for `session.closed`.
     let mut close_deadline: Option<Instant> = None;
+    let mut last_heard = Instant::now();
+    let mut ping = tokio::time::interval_at(Instant::now() + ping_interval, ping_interval);
+    ping.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
     loop {
-        tokio::select! {
+        let lost: Option<String> = tokio::select! {
             command = commands.recv(), if close_deadline.is_none() => {
                 let event = match command {
                     Some(Command::Audio(audio)) => ClientEvent::InputAudioBufferAppend { audio },
@@ -286,32 +336,63 @@ async fn run(
                         ClientEvent::SessionClose
                     }
                 };
-                if let Err(error) = send_event(&mut socket, &event).await {
-                    tracing::warn!(%error, "could not send to the translation socket");
-                    let _ = outputs.send(TranslatorOutput::Error {
-                        code: error.code().to_owned(),
-                        message: error.to_string(),
-                    }).await;
-                    break;
+                match timeout(read_idle, send_event(&mut socket, &event)).await {
+                    Ok(Ok(())) => None,
+                    Ok(Err(error)) => Some(error.to_string()),
+                    Err(_) => Some("sending to OpenAI timed out".to_owned()),
                 }
             }
+            _ = ping.tick() => {
+                let send = socket.send(Message::Ping(Default::default()));
+                match timeout(read_idle, send).await {
+                    Ok(Ok(())) => None,
+                    Ok(Err(error)) => Some(format!("connection lost: {error}")),
+                    Err(_) => Some("sending to OpenAI timed out".to_owned()),
+                }
+            }
+            () = sleep_until(last_heard + read_idle), if close_deadline.is_none() => {
+                Some(format!(
+                    "no answer from OpenAI for {:.1} s",
+                    read_idle.as_secs_f64()
+                ))
+            }
             message = socket.next() => {
+                last_heard = Instant::now();
                 let text = match message {
                     Some(Ok(Message::Text(text))) => text,
                     Some(Ok(Message::Close(frame))) => {
                         tracing::info!(?frame, "translation socket closed by the server");
+                        if close_deadline.is_some() {
+                            break;
+                        }
+                        // Not asked for: the session cannot go on.
+                        let reason = frame.map(|frame| frame.reason.to_string()).unwrap_or_default();
+                        let lost = format!("OpenAI closed the connection {reason}");
+                        let _ = outputs
+                            .send(TranslatorOutput::Error {
+                                code: "network".into(),
+                                message: redact_secrets(lost.trim_end()),
+                            })
+                            .await;
                         break;
                     }
                     Some(Ok(_)) => continue,
                     Some(Err(error)) => {
-                        tracing::warn!(%error, "translation socket error");
                         let _ = outputs.send(TranslatorOutput::Error {
                             code: "network".into(),
                             message: format!("connection lost: {error}"),
                         }).await;
+                        tracing::warn!(%error, "translation socket error");
                         break;
                     }
-                    None => break,
+                    None if close_deadline.is_some() => break,
+                    None => {
+                        let _ = outputs.send(TranslatorOutput::Error {
+                            code: "network".into(),
+                            message: "the connection ended".into(),
+                        }).await;
+                        break;
+                    }
                 };
                 match handle_event(text.as_str()) {
                     Step::Output(output) => {
@@ -323,16 +404,27 @@ async fn run(
                     Step::Closed => break,
                     Step::Skip => {}
                 }
+                None
             }
             () = wait_until(close_deadline) => {
                 tracing::warn!("no session.closed before the timeout, closing the socket");
                 break;
             }
+        };
+        if let Some(message) = lost {
+            tracing::warn!(%message, "translation connection lost");
+            let _ = outputs
+                .send(TranslatorOutput::Error {
+                    code: "network".into(),
+                    message,
+                })
+                .await;
+            break;
         }
     }
 
-    // Best effort: the server may already be gone.
-    let _ = socket.close(None).await;
+    // Best effort, and bounded: the server or the network may already be gone.
+    let _ = timeout(Duration::from_secs(2), socket.close(None)).await;
     tracing::info!("translation session closed");
     let _ = outputs.send(TranslatorOutput::Closed).await;
 }
@@ -399,7 +491,7 @@ pub(super) fn handle_event(text: &str) -> Step {
             Step::Output(TranslatorOutput::OutputTranscriptDelta(delta))
         }
         ServerEvent::Error { error } => {
-            let code = error.best_code();
+            let code = error.classified_code();
             let message = redact_secrets(&error.message);
             tracing::warn!(%code, %message, "translation error from OpenAI");
             Step::Output(TranslatorOutput::Error { code, message })
@@ -579,9 +671,10 @@ mod tests {
             .unwrap_err();
 
         assert!(
-            matches!(&error, TranslatorError::Api { code, .. } if code == "invalid_language"),
+            matches!(&error, TranslatorError::UnsupportedLanguage),
             "{error:?}"
         );
+        assert!(!error.is_retryable());
         server.await.unwrap();
     }
 
@@ -604,6 +697,124 @@ mod tests {
 
         assert!(matches!(error, TranslatorError::Auth), "{error:?}");
         assert!(!error.to_string().contains(FAKE_KEY));
+        server.await.unwrap();
+    }
+
+    /// Accepts a session and answers `session.update`, then runs `then` on the socket.
+    async fn serve_one<F, Fut>(listener: TcpListener, then: F) -> tokio::task::JoinHandle<()>
+    where
+        F: FnOnce(WebSocketStream<TcpStream>) -> Fut + Send + 'static,
+        Fut: std::future::Future<Output = ()> + Send,
+    {
+        tokio::spawn(async move {
+            let mut socket = accept(&listener).await;
+            let _update = recv_json(&mut socket).await;
+            send_json(
+                &mut socket,
+                json!({ "type": "session.updated", "session": {} }),
+            )
+            .await;
+            then(socket).await;
+        })
+    }
+
+    async fn rest(session: &mut TranslatorSession) -> Vec<TranslatorOutput> {
+        let mut outputs = Vec::new();
+        while let Some(output) = session.next_output().await {
+            outputs.push(output);
+        }
+        outputs
+    }
+
+    #[tokio::test]
+    async fn a_silent_server_ends_the_session_with_a_network_error() {
+        let (listener, url) = listener().await;
+        let (hold_tx, hold_rx) = tokio::sync::oneshot::channel::<()>();
+        // Never sends anything (not even pongs: nothing is read): like a server behind a
+        // network that stopped delivering.
+        let server = serve_one(listener, |socket| async move {
+            let _ = hold_rx.await;
+            drop(socket);
+        })
+        .await;
+        let liveness = Liveness {
+            read_idle: Duration::from_millis(300),
+            ping_interval: Duration::from_millis(100),
+        };
+
+        let started = Instant::now();
+        let mut session = connect_with(&url, &key(), Language::English, liveness)
+            .await
+            .unwrap();
+        let outputs = rest(&mut session).await;
+
+        assert!(started.elapsed() >= Duration::from_millis(300));
+        let [
+            TranslatorOutput::Error { code, message },
+            TranslatorOutput::Closed,
+        ] = outputs.as_slice()
+        else {
+            panic!("unexpected outputs: {outputs:?}");
+        };
+        assert_eq!(code, "network");
+        assert!(message.contains("no answer"), "{message}");
+        assert!(TranslatorError::from_api_error(code.clone(), message).is_retryable());
+        drop(hold_tx);
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn pings_keep_a_quiet_connection_alive() {
+        let (listener, url) = listener().await;
+        let server = serve_one(listener, |mut socket| async move {
+            // Reading answers the pings; nothing else is sent until the close.
+            while let Some(Ok(message)) = socket.next().await {
+                if message.is_close() {
+                    break;
+                }
+                if let Message::Text(text) = message
+                    && text.as_str().contains("session.close")
+                {
+                    let closed = json!({ "type": "session.closed" }).to_string();
+                    let _ = socket.send(Message::text(closed)).await;
+                }
+            }
+        })
+        .await;
+        let liveness = Liveness {
+            read_idle: Duration::from_millis(400),
+            ping_interval: Duration::from_millis(100),
+        };
+
+        let mut session = connect_with(&url, &key(), Language::English, liveness)
+            .await
+            .unwrap();
+        tokio::time::sleep(Duration::from_millis(1000)).await;
+        assert!(!session.is_finished(), "the pongs count as an answer");
+        session.close().await;
+
+        assert_eq!(rest(&mut session).await, vec![TranslatorOutput::Closed]);
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn an_unasked_server_close_is_a_network_error() {
+        let (listener, url) = listener().await;
+        let server = serve_one(listener, |mut socket| async move {
+            let _ = socket.close(None).await;
+        })
+        .await;
+
+        let mut session = connect_to(&url, &key(), Language::English).await.unwrap();
+        let outputs = rest(&mut session).await;
+
+        assert!(
+            matches!(
+                outputs.as_slice(),
+                [TranslatorOutput::Error { code, .. }, TranslatorOutput::Closed] if code == "network"
+            ),
+            "{outputs:?}"
+        );
         server.await.unwrap();
     }
 

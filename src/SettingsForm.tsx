@@ -25,7 +25,8 @@ import {
   deviceOptions,
   hasVirtualCable,
 } from "./lib/devices";
-import { languageOptions } from "./lib/languages";
+import { languageOptions, type Direction } from "./lib/languages";
+import { PIPELINES, isActive } from "./lib/pipelines";
 import "./SettingsForm.css";
 
 /**
@@ -43,6 +44,10 @@ function SettingsForm() {
   const [devices, setDevices] = useState<AudioDevice[] | null>(null);
   const [devicesError, setDevicesError] = useState<Failure | null>(null);
   const [loadingDevices, setLoadingDevices] = useState(false);
+  const [active, setActive] = useState<Record<Direction, boolean>>({
+    incoming: false,
+    outgoing: false,
+  });
 
   const fetchDevices = useCallback(
     () =>
@@ -66,6 +71,26 @@ function SettingsForm() {
     setLoadingDevices(true);
     void fetchDevices().finally(() => setLoadingDevices(false));
   }
+
+  // A running direction keeps the settings it started with (see the note in each card).
+  useEffect(() => {
+    let current = true;
+    for (const direction of ["incoming", "outgoing"] as const) {
+      Promise.resolve()
+        .then(() => PIPELINES[direction].getStatus())
+        .then((status) => {
+          if (current)
+            setActive((value) => ({
+              ...value,
+              [direction]: isActive(status.state),
+            }));
+        })
+        .catch(() => undefined);
+    }
+    return () => {
+      current = false;
+    };
+  }, []);
 
   useEffect(() => {
     getSettings()
@@ -141,6 +166,11 @@ function SettingsForm() {
             />
           }
         >
+          {active.incoming && (
+            <Notice tone="info">
+              {t("settings.incoming.appliesNextStart")}
+            </Notice>
+          )}
           <Toggle
             direction="incoming"
             label={t("settings.incoming.enabled")}
@@ -194,6 +224,11 @@ function SettingsForm() {
             />
           }
         >
+          {active.outgoing && (
+            <Notice tone="info">
+              {t("settings.outgoing.appliesNextStart")}
+            </Notice>
+          )}
           <Toggle
             direction="outgoing"
             label={t("settings.outgoing.enabled")}

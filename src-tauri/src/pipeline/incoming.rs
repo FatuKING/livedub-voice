@@ -9,6 +9,7 @@
 //! The engine is shared with the outgoing direction ([`super::translation`]); this module holds
 //! what is specific to incoming: its configuration from the settings and the device check.
 
+use super::reconnect::ReconnectPolicy;
 use super::translation::{Direction, InputSource, PipelineConfig};
 use crate::audio::{AudioDevice, DeviceKind};
 use crate::error::{AppError, AppResult};
@@ -22,6 +23,7 @@ pub fn config(settings: &IncomingSettings) -> PipelineConfig {
         output_device_id: settings.output_device_id.clone(),
         target_language: settings.target_language,
         original_volume: Some(settings.original_volume),
+        reconnect: ReconnectPolicy::default(),
     }
 }
 
@@ -103,6 +105,7 @@ mod tests {
                 output_device_id: Some("headphones".into()),
                 target_language: Language::Spanish,
                 original_volume: Some(35),
+                reconnect: ReconnectPolicy::default(),
             }
         );
     }

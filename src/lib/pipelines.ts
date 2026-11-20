@@ -16,6 +16,17 @@ import {
   type PipelineStatus,
 } from "./api";
 import type { Direction } from "./languages";
+import type { PipelineState } from "./api";
+
+/** Whether a direction holds its devices and a session (or is about to, or reconnects). */
+export function isActive(state: PipelineState): boolean {
+  return (
+    state === "connecting" ||
+    state === "live" ||
+    state === "reconnecting" ||
+    state === "stopping"
+  );
+}
 
 /** The commands and events of one translation direction's pipeline. */
 export interface PipelineApi {

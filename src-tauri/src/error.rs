@@ -39,6 +39,16 @@ pub enum AppError {
     #[error(transparent)]
     Translator(#[from] TranslatorError),
 
+    /// A translation session dropped and every reconnect attempt failed (see
+    /// [`crate::pipeline::reconnect`]). Holds the last attempt's error.
+    #[error(
+        "lost the connection to OpenAI and could not reconnect after {attempts} attempts: {last}"
+    )]
+    ReconnectFailed {
+        attempts: u32,
+        last: TranslatorError,
+    },
+
     /// Windows audio (WASAPI) failed, for example while listing devices.
     #[error("audio device error: {0}")]
     Audio(String),
@@ -70,6 +80,7 @@ impl AppError {
             Self::NoApiKey => "no_api_key",
             Self::CredentialStore(_) => "credential_store",
             Self::Translator(error) => error.code(),
+            Self::ReconnectFailed { .. } => "reconnect_failed",
             Self::Audio(_) => "audio",
             Self::NoOutputDevice => "no_output_device",
             Self::DeviceMissing(_) => "device_missing",
@@ -139,8 +150,30 @@ mod tests {
             json!({ "code": "openai_auth", "message": "OpenAI rejected the API key" })
         );
         assert_eq!(
-            serde_json::to_value(AppError::from(TranslatorError::RateLimited)).unwrap()["code"],
+            serde_json::to_value(AppError::from(TranslatorError::RateLimited {
+                retry_after: None
+            }))
+            .unwrap()["code"],
             json!("openai_rate_limited")
+        );
+        assert_eq!(
+            serde_json::to_value(AppError::from(TranslatorError::QuotaExceeded)).unwrap()["code"],
+            json!("openai_quota")
+        );
+    }
+
+    #[test]
+    fn reconnect_failure_names_the_attempts_and_the_last_error() {
+        let error = AppError::ReconnectFailed {
+            attempts: 6,
+            last: TranslatorError::Network("connection refused".into()),
+        };
+        assert_eq!(
+            serde_json::to_value(&error).unwrap(),
+            json!({
+                "code": "reconnect_failed",
+                "message": "lost the connection to OpenAI and could not reconnect after 6 attempts: could not reach OpenAI: connection refused"
+            })
         );
     }
 
