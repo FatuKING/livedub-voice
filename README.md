@@ -11,7 +11,7 @@
 
 LiveDub Voice works like a simultaneous interpreter that sits between you and your call or game app (Google Meet, Microsoft Teams, Discord, in-game voice chat):
 
-- **Incoming translation** — captures the audio of the other participants (a specific app, or the whole system minus LiveDub Voice) and plays the translation in your headphones, with the original audio mixed in at a lower volume.
+- **Incoming translation** — captures the audio of the other participants (a specific app, or the whole system minus LiveDub Voice) and plays the translation in your headphones, while the original audio keeps playing at a lower volume.
 - **Outgoing translation** — captures your microphone, translates what you say, and sends it to a virtual microphone that your call or game app uses as its input.
 
 ```

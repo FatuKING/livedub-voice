@@ -142,9 +142,10 @@ describe("App", () => {
     expect(
       screen.getByRole("img", { name: "Any language to Spanish" }),
     ).toBeInTheDocument();
+    // Incoming plays on the default headphones; outgoing needs a cable first.
     expect(
       screen.getByRole("button", { name: "Start incoming" }),
-    ).toBeDisabled();
+    ).toBeEnabled();
     expect(
       screen.getByRole("button", { name: "Start outgoing" }),
     ).toBeDisabled();

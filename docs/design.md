@@ -130,7 +130,7 @@ Icons come from `lucide-react` (ISC), imported one by one so only the icons in u
 
 - Every interactive element is reachable by keyboard and shows the focus ring (`--focus-ring`).
 - Never convey meaning by color alone: route cards also say "Incoming"/"Outgoing", pills carry a text label.
-- Disabled actions explain why next to them (`aria-describedby`), like the "Coming soon" start buttons.
+- Disabled actions explain why next to them (`aria-describedby`), like a Start button blocked by a missing API key.
 
 ## Language
 

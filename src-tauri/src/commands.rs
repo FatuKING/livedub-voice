@@ -3,6 +3,7 @@
 //! Every command the panel can `invoke` lives here. Commands that can fail return
 //! [`AppResult`](crate::error::AppResult), so errors reach the panel as `{ code, message }`.
 
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use serde::Serialize;
@@ -12,8 +13,10 @@ use crate::audio::{self, AudioApp, AudioDevice, InputLevel, Monitor, MonitorEven
 use crate::credentials::validation::{KeyValidation, KeyValidator};
 use crate::credentials::{ApiKeyStatus, Credentials};
 use crate::error::{AppError, AppResult};
-use crate::pipeline::outgoing::{EventSink, check_devices};
-use crate::pipeline::{OutgoingConfig, OutgoingEvent, OutgoingPipeline, PipelineStatus, WasapiIo};
+use crate::pipeline::{
+    EventSink, PipelineConfig, PipelineEvent, PipelineStatus, TranslationPipeline, WasapiIo,
+    incoming, outgoing,
+};
 use crate::settings::{Settings, SettingsStore};
 use crate::translator::{FakeTranslator, OpenAiTranslator, Translator};
 
@@ -61,10 +64,17 @@ pub fn get_settings(store: State<'_, SettingsStore>) -> AppResult<Settings> {
     store.get()
 }
 
-/// Validates and saves the settings, returning what was saved.
+/// Validates and saves the settings, returning what was saved. A running incoming translation
+/// applies the new original-audio volume at once.
 #[tauri::command]
-pub fn save_settings(store: State<'_, SettingsStore>, settings: Settings) -> AppResult<Settings> {
-    store.save(settings)
+pub fn save_settings(
+    store: State<'_, SettingsStore>,
+    incoming: State<'_, IncomingState>,
+    settings: Settings,
+) -> AppResult<Settings> {
+    let saved = store.save(settings)?;
+    incoming.set_original_volume(saved.incoming.original_volume);
+    Ok(saved)
 }
 
 /// Result of `save_api_key`: the key is stored even when the check could not reach OpenAI.
@@ -207,6 +217,18 @@ fn emit_monitor_event(app: &AppHandle, event: MonitorEvent) {
     }
 }
 
+/// Names of the events a direction's pipeline sends to the panel.
+struct EventNames {
+    /// The pipeline's status (`PipelineStatus`: `{ state, error }`).
+    status: &'static str,
+    /// The input level (`InputLevel`), ~20 times per second while live.
+    level: &'static str,
+    /// A delta of the translated text; payload `{ delta }`.
+    transcript: &'static str,
+    /// The seconds of input audio sent since start; payload `{ seconds }`.
+    audio_sent: &'static str,
+}
+
 /// Event with the outgoing pipeline's status (`PipelineStatus`: `{ state, error }`).
 pub const OUTGOING_STATUS_EVENT: &str = "outgoing-status";
 /// Event with the outgoing microphone level (`InputLevel`), ~20 times per second while live.
@@ -216,20 +238,123 @@ pub const OUTGOING_TRANSCRIPT_EVENT: &str = "outgoing-transcript";
 /// Event with the seconds of microphone audio sent since start; payload `{ seconds }`.
 pub const OUTGOING_AUDIO_SENT_EVENT: &str = "outgoing-audio-sent";
 
-/// The outgoing pipeline (at most one) and its latest status.
+/// Event with the incoming pipeline's status (`PipelineStatus`: `{ state, error }`).
+pub const INCOMING_STATUS_EVENT: &str = "incoming-status";
+/// Event with the level of the captured apps (`InputLevel`, as the translator hears them, before
+/// ducking), ~20 times per second while live.
+pub const INCOMING_LEVEL_EVENT: &str = "incoming-level";
+/// Event with a delta of the translated text (what the user hears); payload `{ delta }`.
+pub const INCOMING_TRANSCRIPT_EVENT: &str = "incoming-transcript";
+/// Event with the seconds of app audio sent since start; payload `{ seconds }`.
+pub const INCOMING_AUDIO_SENT_EVENT: &str = "incoming-audio-sent";
+
+const OUTGOING_EVENTS: EventNames = EventNames {
+    status: OUTGOING_STATUS_EVENT,
+    level: OUTGOING_LEVEL_EVENT,
+    transcript: OUTGOING_TRANSCRIPT_EVENT,
+    audio_sent: OUTGOING_AUDIO_SENT_EVENT,
+};
+
+const INCOMING_EVENTS: EventNames = EventNames {
+    status: INCOMING_STATUS_EVENT,
+    level: INCOMING_LEVEL_EVENT,
+    transcript: INCOMING_TRANSCRIPT_EVENT,
+    audio_sent: INCOMING_AUDIO_SENT_EVENT,
+};
+
+/// One direction's pipeline (at most one) and its latest status.
 #[derive(Default)]
-pub struct OutgoingState {
-    pipeline: tokio::sync::Mutex<Option<OutgoingPipeline>>,
+pub struct PipelineSlot {
+    pipeline: tokio::sync::Mutex<Option<TranslationPipeline>>,
     status: Arc<Mutex<PipelineStatus>>,
 }
 
-/// Payload of [`OUTGOING_TRANSCRIPT_EVENT`].
+impl PipelineSlot {
+    /// Starts the pipeline unless it already runs. `prepare` reads the settings and checks the
+    /// devices; its failure is reported like a start failure.
+    async fn start(
+        &self,
+        events: EventSink,
+        prepare: impl Future<Output = AppResult<(PipelineConfig, Arc<dyn Translator>, WasapiIo)>>,
+    ) -> AppResult<()> {
+        let mut slot = self.pipeline.lock().await;
+        if slot
+            .as_ref()
+            .is_some_and(|pipeline| !pipeline.is_finished())
+        {
+            return Ok(());
+        }
+        if let Some(finished) = slot.take() {
+            finished.stop().await;
+        }
+        let (config, translator, io) = match prepare.await {
+            Ok(ready) => ready,
+            Err(error) => {
+                tracing::warn!(code = error.code(), %error, "translation refused to start");
+                events(PipelineEvent::Status(PipelineStatus::error(&error)));
+                return Err(error);
+            }
+        };
+        // The pipeline reports its own start failures.
+        let pipeline = TranslationPipeline::start(config, translator, Arc::new(io), events).await?;
+        *slot = Some(pipeline);
+        Ok(())
+    }
+
+    /// Stops the pipeline, if it runs, and waits until it has stopped.
+    async fn stop(&self) {
+        // Keep the slot locked while it stops (up to ~10 s finishing the last sentence), so a
+        // start cannot open the devices before they are released.
+        let mut slot = self.pipeline.lock().await;
+        if let Some(pipeline) = slot.take() {
+            pipeline.stop().await;
+        }
+    }
+
+    fn status(&self) -> PipelineStatus {
+        lock_status(&self.status).clone()
+    }
+}
+
+/// The outgoing pipeline (microphone → virtual cable).
+#[derive(Default)]
+pub struct OutgoingState(PipelineSlot);
+
+/// The incoming pipeline (other apps → headphones).
+#[derive(Default)]
+pub struct IncomingState(PipelineSlot);
+
+impl IncomingState {
+    /// Applies a new original-audio volume to a running incoming translation. Never waits: if
+    /// the pipeline is starting or stopping, the new volume applies on its next start.
+    fn set_original_volume(&self, percent: u8) {
+        if let Ok(slot) = self.0.pipeline.try_lock()
+            && let Some(pipeline) = slot.as_ref()
+        {
+            pipeline.set_original_volume(percent);
+        }
+    }
+
+    /// Restores the apps a running incoming translation ducked (the app is exiting). Blocking.
+    pub fn release_ducking(&self) {
+        if let Ok(slot) = self.0.pipeline.try_lock()
+            && let Some(pipeline) = slot.as_ref()
+        {
+            pipeline.release_ducking();
+        }
+    }
+}
+
+/// Where ducked app volumes are remembered until restored (`ducking.json` in the app config dir).
+pub struct DuckingJournal(pub PathBuf);
+
+/// Payload of the `*-transcript` events.
 #[derive(Debug, Clone, Serialize)]
 pub struct TranscriptDelta {
     pub delta: String,
 }
 
-/// Payload of [`OUTGOING_AUDIO_SENT_EVENT`].
+/// Payload of the `*-audio-sent` events.
 #[derive(Debug, Clone, Serialize)]
 pub struct AudioSent {
     pub seconds: f64,
@@ -249,63 +374,80 @@ pub async fn start_outgoing(
     credentials: State<'_, Credentials>,
     state: State<'_, OutgoingState>,
 ) -> AppResult<()> {
-    let mut slot = state.pipeline.lock().await;
-    if slot
-        .as_ref()
-        .is_some_and(|pipeline| !pipeline.is_finished())
-    {
-        return Ok(());
-    }
-    if let Some(finished) = slot.take() {
-        finished.stop().await;
-    }
-
-    let events = outgoing_event_sink(app, Arc::clone(&state.status));
-    let preflight = async {
+    let slot = &state.0;
+    let events = event_sink(app, Arc::clone(&slot.status), OUTGOING_EVENTS);
+    slot.start(events, async {
         let settings = store.get()?.outgoing;
-        let translator = outgoing_translator(&credentials)?;
+        let translator = translator(&credentials)?;
         let devices = list_audio_devices().await?;
-        if !check_devices(&settings, &devices)? {
+        if !outgoing::check_devices(&settings, &devices)? {
             tracing::warn!("the outgoing output is not a known virtual cable");
         }
-        Ok::<_, AppError>((OutgoingConfig::from(&settings), translator))
-    }
-    .await;
-    let (config, translator) = match preflight {
-        Ok(ready) => ready,
-        Err(error) => {
-            tracing::warn!(code = error.code(), %error, "outgoing translation refused to start");
-            events(OutgoingEvent::Status(PipelineStatus::error(&error)));
-            return Err(error);
-        }
-    };
-    // The pipeline reports its own start failures.
-    let pipeline = OutgoingPipeline::start(config, translator, Arc::new(WasapiIo), events).await?;
-    *slot = Some(pipeline);
-    Ok(())
+        Ok((outgoing::config(&settings), translator, WasapiIo::default()))
+    })
+    .await
 }
 
 /// Stops the outgoing translation, if it is running, and waits until it has stopped.
 #[tauri::command]
 pub async fn stop_outgoing(state: State<'_, OutgoingState>) -> AppResult<()> {
-    // Keep the slot locked while it stops (up to ~10 s finishing the last sentence), so a start
-    // cannot open the devices before they are released.
-    let mut slot = state.pipeline.lock().await;
-    if let Some(pipeline) = slot.take() {
-        pipeline.stop().await;
-    }
+    state.0.stop().await;
     Ok(())
 }
 
 /// The outgoing pipeline's latest status (for a panel that opens while it runs).
 #[tauri::command]
 pub fn get_outgoing_status(state: State<'_, OutgoingState>) -> PipelineStatus {
-    lock_status(&state.status).clone()
+    state.0.status()
+}
+
+/// Starts translating the source app (or the whole system minus LiveDub Voice) into the
+/// headphones, with the saved `incoming` settings, ducking the original audio while it runs.
+///
+/// Does nothing if it is already running. Fails (and emits an `error` status) without an API key
+/// (unless the fake translator is on), when the chosen headphones are not connected, when the
+/// chosen app is not running (`source_app_not_running`), or when the devices or the translator
+/// cannot start. Emits the `incoming-*` events while it runs, and stops on its own on fatal
+/// errors (headphones unplugged, captured app closed, key rejected). The ducked apps get their
+/// volume back whenever it stops.
+#[tauri::command]
+pub async fn start_incoming(
+    app: AppHandle,
+    store: State<'_, SettingsStore>,
+    credentials: State<'_, Credentials>,
+    journal: State<'_, DuckingJournal>,
+    state: State<'_, IncomingState>,
+) -> AppResult<()> {
+    let slot = &state.0;
+    let events = event_sink(app, Arc::clone(&slot.status), INCOMING_EVENTS);
+    slot.start(events, async {
+        let settings = store.get()?.incoming;
+        let translator = translator(&credentials)?;
+        let devices = list_audio_devices().await?;
+        incoming::check_devices(&settings, &devices)?;
+        let io = WasapiIo::with_ducking_journal(journal.0.clone());
+        Ok((incoming::config(&settings), translator, io))
+    })
+    .await
+}
+
+/// Stops the incoming translation, if it is running, and waits until it has stopped (and the
+/// original audio is back to its volume).
+#[tauri::command]
+pub async fn stop_incoming(state: State<'_, IncomingState>) -> AppResult<()> {
+    state.0.stop().await;
+    Ok(())
+}
+
+/// The incoming pipeline's latest status (for a panel that opens while it runs).
+#[tauri::command]
+pub fn get_incoming_status(state: State<'_, IncomingState>) -> PipelineStatus {
+    state.0.status()
 }
 
 /// The fake translator when `LIVEDUB_FAKE_TRANSLATOR` is set, OpenAI with the stored key
 /// otherwise.
-fn outgoing_translator(credentials: &Credentials) -> AppResult<Arc<dyn Translator>> {
+fn translator(credentials: &Credentials) -> AppResult<Arc<dyn Translator>> {
     if let Some(fake) = FakeTranslator::from_env() {
         tracing::info!(mode = ?fake.mode(), "using the fake translator");
         return Ok(Arc::new(fake));
@@ -314,24 +456,24 @@ fn outgoing_translator(credentials: &Credentials) -> AppResult<Arc<dyn Translato
     Ok(Arc::new(OpenAiTranslator::new(key)))
 }
 
-/// Forwards the pipeline's events to the panel, remembering the latest status.
-fn outgoing_event_sink(app: AppHandle, status: Arc<Mutex<PipelineStatus>>) -> EventSink {
+/// Forwards a pipeline's events to the panel, remembering the latest status.
+fn event_sink(app: AppHandle, status: Arc<Mutex<PipelineStatus>>, names: EventNames) -> EventSink {
     Arc::new(move |event| {
         let result = match event {
-            OutgoingEvent::Status(new) => {
+            PipelineEvent::Status(new) => {
                 *lock_status(&status) = new.clone();
-                app.emit(OUTGOING_STATUS_EVENT, new)
+                app.emit(names.status, new)
             }
-            OutgoingEvent::Level(level) => app.emit(OUTGOING_LEVEL_EVENT, level),
-            OutgoingEvent::TranscriptDelta(delta) => {
-                app.emit(OUTGOING_TRANSCRIPT_EVENT, TranscriptDelta { delta })
+            PipelineEvent::Level(level) => app.emit(names.level, level),
+            PipelineEvent::TranscriptDelta(delta) => {
+                app.emit(names.transcript, TranscriptDelta { delta })
             }
-            OutgoingEvent::AudioSent { seconds } => {
-                app.emit(OUTGOING_AUDIO_SENT_EVENT, AudioSent { seconds })
+            PipelineEvent::AudioSent { seconds } => {
+                app.emit(names.audio_sent, AudioSent { seconds })
             }
         };
         if let Err(error) = result {
-            tracing::warn!(%error, "could not emit an outgoing event");
+            tracing::warn!(%error, event = names.status, "could not emit a pipeline event");
         }
     })
 }

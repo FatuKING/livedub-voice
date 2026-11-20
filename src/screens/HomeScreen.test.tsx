@@ -40,6 +40,7 @@ interface Setup {
   hasKey?: boolean;
   fakeTranslator?: boolean;
   outputDeviceId?: string | null;
+  headphonesId?: string | null;
   devices?: AudioDevice[];
 }
 
@@ -47,6 +48,7 @@ function setup({
   hasKey = true,
   fakeTranslator = false,
   outputDeviceId = "cable",
+  headphonesId = null,
   devices = [MIC, CABLE, SPEAKERS],
 }: Setup = {}) {
   const settings: Settings = {
@@ -56,8 +58,8 @@ function setup({
       enabled: false,
       targetLanguage: "es",
       sourceApp: { kind: "allExceptSelf" },
-      outputDeviceId: null,
-      originalVolume: 20,
+      outputDeviceId: headphonesId,
+      originalVolume: 35,
     },
     outgoing: {
       enabled: false,
@@ -77,6 +79,7 @@ function setup({
     },
     list_audio_devices: devices,
     get_outgoing_status: { state: "idle", error: null },
+    get_incoming_status: { state: "idle", error: null },
   };
   invokeMock.mockImplementation((command) =>
     command in answers
@@ -117,9 +120,12 @@ describe("HomeScreen outgoing route", () => {
   it("is blocked without an API key", async () => {
     setup({ hasKey: false });
 
+    // Both directions need the key.
     expect(
-      await screen.findByText("Add your OpenAI API key in Settings to start."),
-    ).toBeInTheDocument();
+      await screen.findAllByText(
+        "Add your OpenAI API key in Settings to start.",
+      ),
+    ).toHaveLength(2);
     expect(startButton()).toBeDisabled();
   });
 
@@ -156,5 +162,45 @@ describe("HomeScreen outgoing route", () => {
       "not a known virtual cable",
     );
     expect(startButton()).toBeEnabled();
+  });
+});
+
+describe("HomeScreen incoming route", () => {
+  function startIncoming() {
+    return screen.getByRole("button", { name: "Start incoming" });
+  }
+
+  it("can start on the default headphones, saying how loud the original stays", async () => {
+    setup();
+    await loaded();
+
+    expect(startIncoming()).toBeEnabled();
+    expect(screen.getByText("Whole system")).toBeInTheDocument();
+    expect(screen.getByText("Default device")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "While it runs, the original audio plays at 35% under the translation. It goes back to its volume when you stop.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("is blocked when the chosen headphones are not connected", async () => {
+    setup({ headphonesId: "usb-headset" });
+
+    expect(
+      await screen.findByText(
+        /The headphones chosen in Settings are not connected/,
+      ),
+    ).toBeInTheDocument();
+    expect(startIncoming()).toBeDisabled();
+    // The outgoing route does not care about the headphones.
+    expect(startButton()).toBeEnabled();
+  });
+
+  it("does not need a key with the fake translator", async () => {
+    setup({ hasKey: false, fakeTranslator: true, headphonesId: "speakers" });
+    await loaded();
+
+    expect(startIncoming()).toBeEnabled();
   });
 });

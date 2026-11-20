@@ -325,6 +325,11 @@ pub fn list_audio_apps() -> AppResult<Vec<AudioApp>> {
     Ok(apps)
 }
 
+/// A snapshot of the running processes (blocking).
+pub fn process_table() -> AppResult<ProcessTable> {
+    Ok(ProcessTable::new(imp::process_snapshot()?))
+}
+
 /// What to capture for the incoming direction's `source`.
 ///
 /// Blocking, like [`list_audio_apps`]. Fails with [`AppError::SourceAppNotRunning`] when a

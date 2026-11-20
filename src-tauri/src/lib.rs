@@ -27,10 +27,8 @@ pub fn run() {
                 "LiveDub Voice starting"
             );
 
-            let settings_path = app
-                .path()
-                .app_config_dir()?
-                .join(settings::SETTINGS_FILE_NAME);
+            let config_dir = app.path().app_config_dir()?;
+            let settings_path = config_dir.join(settings::SETTINGS_FILE_NAME);
             let store = settings::SettingsStore::load(settings_path);
             tracing::info!(path = %store.path().display(), "settings loaded");
             app.manage(store);
@@ -39,6 +37,18 @@ pub fn run() {
             app.manage(credentials::validation::KeyValidator::new()?);
             app.manage(commands::MonitorState::default());
             app.manage(commands::OutgoingState::default());
+            app.manage(commands::IncomingState::default());
+
+            // App volumes a previous run left ducked (it crashed while translating incoming
+            // audio) get their volume back.
+            let journal = config_dir.join(audio::ducking::JOURNAL_FILE_NAME);
+            let recovery = journal.clone();
+            std::thread::spawn(move || {
+                if let Err(error) = audio::ducking::recover(&recovery) {
+                    tracing::warn!(%error, "could not restore app volumes left ducked");
+                }
+            });
+            app.manage(commands::DuckingJournal(journal));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -55,12 +65,28 @@ pub fn run() {
             commands::stop_monitor,
             commands::start_outgoing,
             commands::stop_outgoing,
-            commands::get_outgoing_status
+            commands::get_outgoing_status,
+            commands::start_incoming,
+            commands::stop_incoming,
+            commands::get_incoming_status
         ])
-        .run(tauri::generate_context!());
+        .build(tauri::generate_context!());
 
-    if let Err(error) = result {
-        eprintln!("error while running tauri application: {error}");
-        std::process::exit(1);
-    }
+    let app = match result {
+        Ok(app) => app,
+        Err(error) => {
+            eprintln!("error while running tauri application: {error}");
+            std::process::exit(1);
+        }
+    };
+    app.run(|app, event| {
+        if let tauri::RunEvent::Exit = event {
+            // Never leave the captured apps ducked: restore them before the process ends.
+            app.state::<commands::IncomingState>().release_ducking();
+            let journal = &app.state::<commands::DuckingJournal>().0;
+            if let Err(error) = audio::ducking::recover(journal) {
+                tracing::warn!(%error, "could not restore the ducked apps on exit");
+            }
+        }
+    });
 }
