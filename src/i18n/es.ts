@@ -42,6 +42,8 @@ export const es: Messages = {
           "Los auriculares elegidos en Configuración no están conectados. Hay que conectarlos o elegir otra salida.",
       },
       stopped: "La traducción entrante se detuvo: {error}",
+      reconnecting:
+        "Se perdió la conexión con OpenAI. Reconectando… Mientras tanto, el audio original suena con el volumen bajado y sin traducción.",
     },
     outgoing: {
       eyebrow: "Saliente · tu voz",
@@ -62,12 +64,16 @@ export const es: Messages = {
           "La salida elegida en Configuración no está conectada. Hay que instalar o conectar el cable virtual, o elegir otra salida.",
       },
       stopped: "La traducción saliente se detuvo: {error}",
+      reconnecting:
+        "Se perdió la conexión con OpenAI. Reconectando… Mientras tanto, los demás no escuchan nada de tu voz.",
     },
     goToSettings: "Ir a Configuración",
     status: {
       idle: "Apagado",
       connecting: "Conectando…",
       live: "En vivo",
+      reconnecting: "Reconectando…",
+      reconnectingAttempt: "Reconectando {attempt}/{max}…",
       stopping: "Terminando la traducción…",
       error: "Error",
     },
@@ -128,6 +134,8 @@ export const es: Messages = {
       originalVolume: "Volumen del audio original",
       originalVolumeHint:
         "Cuánto se sigue oyendo el audio original debajo de la traducción (con Todo el sistema, se bajan todas las apps). Vuelve a su volumen al detener la traducción.",
+      appliesNextStart:
+        "La traducción entrante está activa. Los cambios se aplican la próxima vez que se inicie, salvo el volumen del audio original, que se aplica al guardar.",
     },
     outgoing: {
       eyebrow: "Saliente",
@@ -141,6 +149,8 @@ export const es: Messages = {
         "Lado de reproducción de un cable virtual (p. ej. CABLE Input). Su lado de grabación es el micrófono a elegir en la llamada o el juego.",
       virtualCableMissing:
         "No se encontró ningún cable virtual. Hace falta instalar uno, como VB-CABLE, y después actualizar los dispositivos.",
+      appliesNextStart:
+        "La traducción saliente está activa. Los cambios se aplican la próxima vez que se inicie.",
     },
   },
 
@@ -246,7 +256,15 @@ export const es: Messages = {
     openai_no_model_access:
       "Esta cuenta de OpenAI no puede usar gpt-realtime-translate.",
     openai_rate_limited:
-      "Se alcanzó el límite de uso o la cuota de OpenAI. Conviene volver a intentar más tarde.",
+      "Se alcanzó el límite de uso de OpenAI. Conviene volver a intentar en un minuto.",
+    openai_quota:
+      "La cuenta de OpenAI no tiene créditos ni cuota disponibles. Revisar la facturación en platform.openai.com.",
+    openai_unsupported_language:
+      "OpenAI no puede traducir al idioma elegido. Elegir otro en Configuración.",
+    openai_server:
+      "OpenAI tiene problemas ({detail}). Conviene volver a intentar más tarde.",
+    reconnect_failed:
+      "Se perdió la conexión con OpenAI y no se pudo reconectar ({detail}). Revisar la conexión y volver a iniciar.",
     network: "No se pudo conectar con OpenAI ({detail}).",
     openai_protocol: "Respuesta inesperada de OpenAI ({detail}).",
     openai_api: "OpenAI devolvió un error ({detail}).",

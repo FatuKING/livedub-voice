@@ -188,6 +188,22 @@ impl ApiError {
             .or_else(|| self.kind.clone())
             .unwrap_or_else(|| "unknown".to_owned())
     }
+
+    /// [`best_code`](Self::best_code), except that an invalid request about the target language
+    /// (`param` naming a `language` field) becomes `unsupported_language`: OpenAI does not
+    /// document a code of its own for an unsupported language.
+    pub fn classified_code(&self) -> String {
+        let about_language = self
+            .param
+            .as_deref()
+            .is_some_and(|param| param.contains("language"));
+        let invalid_request = self.kind.as_deref() == Some("invalid_request_error");
+        if about_language && invalid_request {
+            "unsupported_language".to_owned()
+        } else {
+            self.best_code()
+        }
+    }
 }
 
 /// The parts of the server `session` object the client uses.
@@ -435,6 +451,17 @@ mod tests {
         assert_eq!(error.best_code(), "invalid_event");
         assert_eq!(error.kind.as_deref(), Some("invalid_request_error"));
         assert_eq!(error.message, "The 'type' field is missing.");
+    }
+
+    #[test]
+    fn an_invalid_language_is_classified_as_unsupported() {
+        let text = r#"{"type":"error","error":{"type":"invalid_request_error","code":"invalid_value",
+            "message":"Invalid value: 'xx'.","param":"session.audio.output.language"}}"#;
+        let ServerEvent::Error { error } = parse_server_event(text).unwrap() else {
+            panic!("not an error event");
+        };
+        assert_eq!(error.best_code(), "invalid_value");
+        assert_eq!(error.classified_code(), "unsupported_language");
     }
 
     #[test]

@@ -15,8 +15,12 @@
 
 pub mod incoming;
 pub mod latency;
+pub mod manager;
 pub mod outgoing;
+pub mod reconnect;
 pub mod recorder;
+#[cfg(test)]
+pub(crate) mod testing;
 pub mod translation;
 
 use std::path::PathBuf;
@@ -29,8 +33,11 @@ use crate::audio::{AudioConsumer, AudioProducer, LoopbackTarget, StreamFormat};
 use crate::error::{AppError, AppResult};
 use crate::settings::SourceApp;
 
+pub use manager::{PipelineManager, StartPlan};
+pub use reconnect::ReconnectPolicy;
 pub use translation::{
-    Direction, EventSink, InputSource, PipelineConfig, PipelineEvent, TranslationPipeline,
+    Direction, EventSink, InputSource, PipelineConfig, PipelineEvent, StopHandle,
+    TranslationPipeline,
 };
 
 /// What a pipeline is doing, as shown in the panel's status pill.
@@ -44,6 +51,10 @@ pub enum PipelineState {
     Connecting,
     /// Translating.
     Live,
+    /// The translation session dropped (network loss, server close, timeout): the devices stay
+    /// open while a new session is opened with backoff (see [`reconnect`] and
+    /// [`PipelineStatus::reconnect`]).
+    Reconnecting,
     /// Stop requested: finishing the translation of what was already said (the tail of the last
     /// sentence) before releasing the devices.
     Stopping,
@@ -67,11 +78,22 @@ impl From<&AppError> for PipelineError {
     }
 }
 
-/// A pipeline's state, plus the error that stopped it (only with [`PipelineState::Error`]).
+/// Which reconnect attempt is running (with [`PipelineState::Reconnecting`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReconnectProgress {
+    /// 1-based.
+    pub attempt: u32,
+    pub max_attempts: u32,
+}
+
+/// A pipeline's state, plus the error that stopped it (only with [`PipelineState::Error`]) or
+/// the reconnect attempt (only with [`PipelineState::Reconnecting`]).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 pub struct PipelineStatus {
     pub state: PipelineState,
     pub error: Option<PipelineError>,
+    pub reconnect: Option<ReconnectProgress>,
 }
 
 impl PipelineStatus {
@@ -82,21 +104,32 @@ impl PipelineStatus {
     pub fn connecting() -> Self {
         Self {
             state: PipelineState::Connecting,
-            error: None,
+            ..Self::default()
         }
     }
 
     pub fn live() -> Self {
         Self {
             state: PipelineState::Live,
-            error: None,
+            ..Self::default()
         }
     }
 
     pub fn stopping() -> Self {
         Self {
             state: PipelineState::Stopping,
+            ..Self::default()
+        }
+    }
+
+    pub fn reconnecting(attempt: u32, max_attempts: u32) -> Self {
+        Self {
+            state: PipelineState::Reconnecting,
             error: None,
+            reconnect: Some(ReconnectProgress {
+                attempt,
+                max_attempts,
+            }),
         }
     }
 
@@ -104,6 +137,7 @@ impl PipelineStatus {
         Self {
             state: PipelineState::Error,
             error: Some(error.into()),
+            reconnect: None,
         }
     }
 }

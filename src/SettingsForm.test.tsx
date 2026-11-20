@@ -66,14 +66,28 @@ const discord: AudioApp = {
   active: false,
 };
 
-/** Mocks the core: `get_settings` returns `settings`, `save_settings` echoes what it gets. */
+/**
+ * Mocks the core: `get_settings` returns `settings`, `save_settings` echoes what it gets, and
+ * the translations are in `states` (idle by default).
+ */
 function mockCore(
   settings: Settings,
   devices: AudioDevice[],
   apps: AudioApp[] = [chrome, discord],
+  states: { incoming?: string; outgoing?: string } = {},
 ) {
   invokeMock.mockImplementation((command, args) => {
     switch (command) {
+      case "get_incoming_status":
+        return Promise.resolve({
+          state: states.incoming ?? "idle",
+          error: null,
+        });
+      case "get_outgoing_status":
+        return Promise.resolve({
+          state: states.outgoing ?? "idle",
+          error: null,
+        });
       case "get_settings":
         return Promise.resolve(settings);
       case "list_audio_devices":
@@ -104,6 +118,21 @@ function optionLabels(select: HTMLElement): string[] {
 describe("SettingsForm", () => {
   beforeEach(() => {
     invokeMock.mockReset();
+  });
+
+  it("says that changes apply on the next start while a direction runs", async () => {
+    mockCore(defaults, [speakers], [chrome, discord], { outgoing: "live" });
+
+    render(<SettingsForm />);
+
+    expect(
+      await screen.findByText(
+        "The outgoing translation is running. Changes here apply the next time you start it.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText(/The incoming translation is running/),
+    ).not.toBeInTheDocument();
   });
 
   it("offers every target language, localized, with English and Spanish on top", async () => {
