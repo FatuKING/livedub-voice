@@ -58,10 +58,15 @@ strip = true
 
 [target."cfg(windows)".dependencies]
 wasapi = "0.27"
-# Same version wasapi uses: process snapshot, process names and exit checks for app capture.
+# Same version wasapi uses: process snapshot, process names and exit checks for app capture,
+# and per-app session volumes for ducking.
 windows = { version = "0.62", features = [
   "Win32_Foundation",
+  "Win32_Media_Audio",
   "Win32_Storage_FileSystem",
+  "Win32_System_Com",
+  "Win32_System_Com_StructuredStorage",
+  "Win32_System_Variant",
   "Win32_System_Diagnostics_ToolHelp",
   "Win32_System_Threading",
 ] }

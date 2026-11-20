@@ -1,13 +1,14 @@
 //! Opt-in session recorder for diagnosing audio quality. **Local only, off by default.**
 //!
-//! When the `LIVEDUB_RECORD_DIR` environment variable names a directory, every outgoing session
-//! writes a folder `outgoing-<unix seconds>` there with:
+//! When the `LIVEDUB_RECORD_DIR` environment variable names a directory, every session writes a
+//! folder `<direction>-<unix seconds>` there (`outgoing-…` or `incoming-…`) with:
 //!
 //! - `sent.wav`: the PCM16 mono 24 kHz audio actually sent to the translator, silence included;
 //! - `received.wav`: the translated audio as received, placed on a wall-clock timeline: a gap
 //!   between deltas becomes silence, so timing problems are audible (deltas that arrive faster
 //!   than real time are appended back to back);
-//! - `cable.wav`: what was written to the virtual cable, in the cable's rate and channels;
+//! - `output.wav`: what was played on the output (the virtual cable for outgoing, the headphones
+//!   for incoming), in its rate and channels;
 //! - `events.jsonl`: one JSON object per line with `t_ms` (since start) and `kind`: each 200 ms
 //!   block sent (with its RMS/peak), each output delta (sample count, peak, samples kept after
 //!   the jitter buffer skipped digital silence, buffered ms, and the server's `elapsed_ms`,
@@ -16,7 +17,8 @@
 //!   every second, the stop sequence and a final summary.
 //!
 //! Nothing is uploaded anywhere; the files stay where the user pointed. They contain the user's
-//! voice and the transcript, so the variable must never be set by default.
+//! voice (or the captured apps' audio) and the transcript, so the variable must never be set by
+//! default. A `ducking` event records the capture gain of an incoming session.
 
 use std::fs::File;
 use std::io::{BufWriter, Seek, SeekFrom, Write};
@@ -118,7 +120,7 @@ pub struct SessionRecorder {
     dir: PathBuf,
     sent: WavWriter,
     received: WavWriter,
-    cable: WavWriter,
+    output: WavWriter,
     events: BufWriter<File>,
     /// Sent samples not yet summarized in an event (one event per 200 ms block).
     block_samples: usize,
@@ -130,7 +132,7 @@ pub struct SessionRecorder {
 impl SessionRecorder {
     /// A recorder when [`RECORD_DIR_ENV`] is set, writing `<dir>/<direction>-<unix seconds>`.
     /// Logs and returns `None` if the folder cannot be created.
-    pub fn from_env(direction: &str, cable_rate: u32, cable_channels: u16) -> Option<Self> {
+    pub fn from_env(direction: &str, output_rate: u32, output_channels: u16) -> Option<Self> {
         let root = std::env::var_os(RECORD_DIR_ENV)?;
         if root.is_empty() {
             return None;
@@ -139,7 +141,7 @@ impl SessionRecorder {
             .duration_since(UNIX_EPOCH)
             .map_or(0, |since| since.as_secs());
         let dir = PathBuf::from(root).join(format!("{direction}-{stamp}"));
-        match Self::create(&dir, cable_rate, cable_channels) {
+        match Self::create(&dir, output_rate, output_channels) {
             Ok(recorder) => {
                 tracing::info!(dir = %dir.display(), "recording this session for diagnostics");
                 Some(recorder)
@@ -152,13 +154,13 @@ impl SessionRecorder {
     }
 
     /// A recorder writing into `dir` (created if needed).
-    pub fn create(dir: &Path, cable_rate: u32, cable_channels: u16) -> std::io::Result<Self> {
+    pub fn create(dir: &Path, output_rate: u32, output_channels: u16) -> std::io::Result<Self> {
         std::fs::create_dir_all(dir)?;
         Ok(Self {
             dir: dir.to_owned(),
             sent: WavWriter::create(&dir.join("sent.wav"), SAMPLE_RATE, 1)?,
             received: WavWriter::create(&dir.join("received.wav"), SAMPLE_RATE, 1)?,
-            cable: WavWriter::create(&dir.join("cable.wav"), cable_rate, cable_channels)?,
+            output: WavWriter::create(&dir.join("output.wav"), output_rate, output_channels)?,
             events: BufWriter::new(File::create(dir.join("events.jsonl"))?),
             block_samples: 0,
             block_sum_squares: 0.0,
@@ -249,12 +251,12 @@ impl SessionRecorder {
         );
     }
 
-    /// Interleaved samples written to the cable.
-    pub fn cable(&mut self, interleaved: &[f32]) {
+    /// Interleaved samples written to the output device (cable or headphones).
+    pub fn output(&mut self, interleaved: &[f32]) {
         if self.failed {
             return;
         }
-        let result = self.cable.write_f32(interleaved);
+        let result = self.output.write_f32(interleaved);
         self.check(result);
     }
 
@@ -276,7 +278,7 @@ impl SessionRecorder {
     pub fn finish(mut self) -> PathBuf {
         let result = self.events.flush();
         self.check(result);
-        for wav in [self.sent, self.received, self.cable] {
+        for wav in [self.sent, self.received, self.output] {
             if let Err(error) = wav.finish() {
                 tracing::warn!(%error, "could not finish a recorded WAV file");
             }
@@ -443,7 +445,7 @@ mod tests {
         };
         recorder.received(&first, Duration::from_millis(500), 2400, 100);
         recorder.received(&vec![8; 2400].into(), Duration::from_millis(1000), 0, 0);
-        recorder.cable(&[0.5, -0.5, 0.25, -0.25]);
+        recorder.output(&[0.5, -0.5, 0.25, -0.25]);
         recorder.event(Duration::from_secs(2), json!({ "kind": "summary" }));
         assert_eq!(recorder.finish(), session);
 
@@ -461,9 +463,9 @@ mod tests {
         assert!(received[14_400..24_000].iter().all(|&s| s == 0));
         assert!(received[24_000..].iter().all(|&s| s == 8));
 
-        let (spec, cable) = read_wav(&session.join("cable.wav"));
+        let (spec, output) = read_wav(&session.join("output.wav"));
         assert_eq!((spec.sample_rate, spec.channels), (48_000, 2));
-        assert_eq!(cable, vec![16_384, -16_384, 8_192, -8_192]);
+        assert_eq!(output, vec![16_384, -16_384, 8_192, -8_192]);
 
         let events = std::fs::read_to_string(session.join("events.jsonl")).unwrap();
         let events: Vec<Value> = events

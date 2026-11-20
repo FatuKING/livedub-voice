@@ -7,18 +7,14 @@ import StatusPill, { type StatusTone } from "./components/StatusPill";
 import { useT } from "./i18n/context";
 import { translateError } from "./i18n/errors";
 import {
-  getOutgoingStatus,
   isAppError,
-  onOutgoingLevel,
-  onOutgoingStatus,
-  onOutgoingTranscript,
-  startOutgoing,
-  stopOutgoing,
   type InputLevel,
   type PipelineState,
   type PipelineStatus,
 } from "./lib/api";
-import "./OutgoingControls.css";
+import type { Direction } from "./lib/languages";
+import { PIPELINES } from "./lib/pipelines";
+import "./TranslationControls.css";
 
 const SILENCE: InputLevel = { rms: 0, peak: 0 };
 const IDLE: PipelineStatus = { state: "idle", error: null };
@@ -26,34 +22,39 @@ const IDLE: PipelineStatus = { state: "idle", error: null };
 /** Translated text kept for the caption area (the tail of the session). */
 const MAX_CAPTION_CHARS = 280;
 
-const TONES: Record<PipelineState, StatusTone> = {
-  idle: "neutral",
-  connecting: "sun",
-  live: "outgoing",
-  stopping: "sun",
-  error: "danger",
-};
+function tones(direction: Direction): Record<PipelineState, StatusTone> {
+  return {
+    idle: "neutral",
+    connecting: "sun",
+    live: direction,
+    stopping: "sun",
+    error: "danger",
+  };
+}
 
-/** Why Start is disabled: a missing API key, no output chosen, or the chosen output is gone. */
-export type OutgoingBlocker = "noApiKey" | "noOutput" | "outputMissing";
-
-export interface OutgoingControlsProps {
-  /** Set when the outgoing translation cannot start; Start is disabled and the reason shown. */
-  blocker: OutgoingBlocker | null;
-  /** Whether the chosen output is a known virtual cable; a warning is shown when it is not. */
-  outputIsCable: boolean;
+export interface TranslationControlsProps {
+  /** Incoming (others → you, teal) or outgoing (you → others, coral). */
+  direction: Direction;
+  /** Why Start is disabled (shown with a link to Settings); `null` when it can start. */
+  blocked: string | null;
+  /** A warning that does not block Start (for example: the output is not a virtual cable). */
+  warning?: string | null;
+  /** How to use this direction, under the captions. */
+  help: string;
   onOpenSettings: () => void;
 }
 
 /**
- * Start/stop, status, microphone level and live captions of the outgoing translation
- * (microphone → virtual cable). The translation keeps running in the core when this unmounts.
+ * Start/stop, status, input level and live captions of one translation direction. The
+ * translation keeps running in the core when this unmounts.
  */
-function OutgoingControls({
-  blocker,
-  outputIsCable,
+function TranslationControls({
+  direction,
+  blocked,
+  warning = null,
+  help,
   onOpenSettings,
-}: OutgoingControlsProps) {
+}: TranslationControlsProps) {
   const t = useT();
   const noteId = useId();
   const captionsId = useId();
@@ -61,6 +62,7 @@ function OutgoingControls({
   const [level, setLevel] = useState<InputLevel>(SILENCE);
   const [caption, setCaption] = useState("");
   const [busy, setBusy] = useState(false);
+  const pipeline = PIPELINES[direction];
 
   useEffect(() => {
     let current = true;
@@ -70,19 +72,20 @@ function OutgoingControls({
       if (next.state !== "live") setLevel(SILENCE);
     }
     const subscriptions = [
-      onOutgoingStatus((next) => {
+      pipeline.onStatus((next) => {
         if (next.state === "connecting") setCaption("");
         applyStatus(next);
       }),
-      onOutgoingLevel((next) => {
+      pipeline.onLevel((next) => {
         if (current) setLevel(next);
       }),
-      onOutgoingTranscript((delta) => {
+      pipeline.onTranscript((delta) => {
         if (!current) return;
         setCaption((text) => (text + delta).slice(-MAX_CAPTION_CHARS));
       }),
     ];
-    getOutgoingStatus()
+    pipeline
+      .getStatus()
       .then(applyStatus)
       .catch(() => undefined);
     return () => {
@@ -91,7 +94,7 @@ function OutgoingControls({
         subscription.then((unlisten) => unlisten()).catch(() => undefined);
       }
     };
-  }, []);
+  }, [pipeline]);
 
   const stopping = status.state === "stopping";
   const running =
@@ -103,12 +106,12 @@ function OutgoingControls({
       if (running) {
         // The core finishes the last sentence first (up to ~10 s).
         setStatus({ state: "stopping", error: null });
-        await stopOutgoing();
+        await pipeline.stop();
         setStatus(IDLE);
       } else {
         setCaption("");
         setStatus({ state: "connecting", error: null });
-        await startOutgoing();
+        await pipeline.start();
       }
     } catch (reason: unknown) {
       setStatus({
@@ -122,13 +125,13 @@ function OutgoingControls({
     }
   }
 
-  const startBlocked = !running && blocker !== null;
+  const startBlocked = !running && blocked !== null;
 
   return (
-    <div className="ld-outgoing">
+    <div className="ld-translation">
       <div className="ld-route-card__buttons">
         <Button
-          variant={running ? "secondary" : "outgoing"}
+          variant={running ? "secondary" : direction}
           icon={
             running ? (
               <Square size={16} aria-hidden="true" />
@@ -140,63 +143,61 @@ function OutgoingControls({
           aria-describedby={startBlocked ? noteId : undefined}
           onClick={() => void toggle()}
         >
-          {running ? t("home.outgoing.stop") : t("home.outgoing.start")}
+          {running ? t(`home.${direction}.stop`) : t(`home.${direction}.start`)}
         </Button>
-        <StatusPill tone={TONES[status.state]}>
+        <StatusPill tone={tones(direction)[status.state]}>
           {t(`home.status.${status.state}`)}
         </StatusPill>
       </div>
 
-      {!running && blocker && (
+      {!running && blocked && (
         <p className="ld-route-card__note" id={noteId}>
-          {t(`home.outgoing.blocked.${blocker}`)}{" "}
+          {blocked}{" "}
           <button
             type="button"
-            className="ld-outgoing__link"
+            className="ld-translation__link"
             onClick={onOpenSettings}
           >
-            {t("home.outgoing.goToSettings")}
+            {t("home.goToSettings")}
           </button>
         </p>
       )}
-      {!blocker && !outputIsCable && (
-        <Notice tone="warning">{t("home.outgoing.notCable")}</Notice>
-      )}
+      {!blocked && warning && <Notice tone="warning">{warning}</Notice>}
       {status.state === "error" && status.error && (
         <Notice tone="error">
-          {t("home.outgoing.stopped", {
+          {t(`home.${direction}.stopped`, {
             error: translateError(status.error, t),
           })}
         </Notice>
       )}
 
       <LevelMeter
-        direction="outgoing"
-        label={t("home.outgoing.level")}
+        direction={direction}
+        label={t(`home.${direction}.level`)}
         level={level.rms}
         peak={level.peak}
       />
 
-      <div className="ld-outgoing__captions">
-        <span className="ld-outgoing__captions-label" id={captionsId}>
-          {t("home.outgoing.captions")}
+      <div className="ld-translation__captions">
+        <span className="ld-translation__captions-label" id={captionsId}>
+          {t(`home.${direction}.captions`)}
         </span>
         <p
-          className="ld-outgoing__caption"
+          className={`ld-translation__caption ld-translation__caption--${direction}`}
           aria-labelledby={captionsId}
           aria-live="polite"
         >
           {caption || (
-            <span className="ld-outgoing__caption-empty">
-              {t("home.outgoing.captionsEmpty")}
+            <span className="ld-translation__caption-empty">
+              {t(`home.${direction}.captionsEmpty`)}
             </span>
           )}
         </p>
       </div>
 
-      <p className="ld-route-card__note">{t("home.outgoing.help")}</p>
+      <p className="ld-route-card__note">{help}</p>
     </div>
   );
 }
 
-export default OutgoingControls;
+export default TranslationControls;

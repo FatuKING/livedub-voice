@@ -1,13 +1,11 @@
-import { Play } from "lucide-react";
-import { useEffect, useId, useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import Button from "../components/Button";
 import Card from "../components/Card";
 import LanguageRoute from "../components/LanguageRoute";
 import Notice from "../components/Notice";
 import PageHeader from "../components/PageHeader";
 import Perforation from "../components/Perforation";
-import StatusPill from "../components/StatusPill";
-import { useI18n, useT } from "../i18n/context";
+import { useI18n } from "../i18n/context";
 import { failureText, type Failure } from "../i18n/errors";
 import {
   getApiKeyStatus,
@@ -19,8 +17,11 @@ import {
   type Settings,
 } from "../lib/api";
 import { languageName, type Direction } from "../lib/languages";
-import OutgoingControls, { type OutgoingBlocker } from "../OutgoingControls";
+import TranslationControls from "../TranslationControls";
 import "./screens.css";
+
+/** Original-audio volume shown before the saved settings load (the core's default). */
+const DEFAULT_ORIGINAL_VOLUME = 20;
 
 /** Languages shown before the saved settings load (or if they fail to load). */
 const FALLBACK_TARGETS: Record<Direction, Language> = {
@@ -61,36 +62,27 @@ function RouteCard({ direction, target, details, children }: RouteCardProps) {
   );
 }
 
-/** The incoming direction is not wired yet. */
-function ComingSoon() {
-  const t = useT();
-  const noteId = useId();
-  return (
-    <>
-      <div className="ld-route-card__buttons">
-        <Button
-          variant="incoming"
-          icon={<Play size={16} aria-hidden="true" />}
-          disabled
-          aria-describedby={noteId}
-        >
-          {t("home.incoming.start")}
-        </Button>
-        <StatusPill tone="sun">{t("home.comingSoon")}</StatusPill>
-      </div>
-      <p className="ld-route-card__note" id={noteId}>
-        {t("home.comingSoonNote")}
-      </p>
-    </>
-  );
-}
-
-/** What Home needs to know to enable the outgoing Start button. */
+/** What Home needs to know to enable the Start buttons. */
 interface Readiness {
   /** `null` until known; the fake translator counts as a key. */
   hasKey: boolean | null;
   /** `null` until listed (or if listing failed). */
   devices: AudioDevice[] | null;
+}
+
+/** Why the outgoing translation cannot start, if it cannot. */
+type OutgoingBlocker = "noApiKey" | "noOutput" | "outputMissing";
+
+/** Why the incoming translation cannot start, if it cannot. */
+type IncomingBlocker = "noApiKey" | "outputMissing";
+
+/** Whether an output chosen in Settings is known to be gone. */
+function outputMissing(id: string | null, devices: AudioDevice[] | null) {
+  return (
+    id !== null &&
+    devices !== null &&
+    !devices.some((d) => d.kind === "output" && d.id === id)
+  );
 }
 
 function outgoingBlocker(
@@ -101,7 +93,17 @@ function outgoingBlocker(
   if (!settings) return null;
   const outputId = settings.outgoing.outputDeviceId;
   if (outputId === null) return "noOutput";
-  if (devices && !devices.some((d) => d.kind === "output" && d.id === outputId))
+  if (outputMissing(outputId, devices)) return "outputMissing";
+  return null;
+}
+
+function incomingBlocker(
+  settings: Settings | null,
+  { hasKey, devices }: Readiness,
+): IncomingBlocker | null {
+  if (hasKey === false) return "noApiKey";
+  // No headphones chosen means the system default.
+  if (settings && outputMissing(settings.incoming.outputDeviceId, devices))
     return "outputMissing";
   return null;
 }
@@ -110,9 +112,9 @@ export interface HomeScreenProps {
   onOpenSettings: () => void;
 }
 
-/** Overview of both translation routes, with the outgoing translation's controls. */
+/** Overview of both translation routes, each with its controls. */
 function HomeScreen({ onOpenSettings }: HomeScreenProps) {
-  const t = useT();
+  const { t, format } = useI18n();
   const [settings, setSettings] = useState<Settings | null>(null);
   const [error, setError] = useState<Failure | null>(null);
   const [readiness, setReadiness] = useState<Readiness>({
@@ -165,6 +167,10 @@ function HomeScreen({ onOpenSettings }: HomeScreenProps) {
   const outgoingOutput = readiness.devices?.find(
     (device) => device.kind === "output" && device.id === outgoingOutputId,
   );
+  const outgoingBlocked = outgoingBlocker(settings, readiness);
+  const incomingBlocked = incomingBlocker(settings, readiness);
+  const originalVolume =
+    settings?.incoming.originalVolume ?? DEFAULT_ORIGINAL_VOLUME;
 
   return (
     <>
@@ -184,7 +190,16 @@ function HomeScreen({ onOpenSettings }: HomeScreenProps) {
             },
           ]}
         >
-          <ComingSoon />
+          <TranslationControls
+            direction="incoming"
+            blocked={
+              incomingBlocked && t(`home.incoming.blocked.${incomingBlocked}`)
+            }
+            help={t("home.incoming.help", {
+              volume: format.percent(originalVolume / 100),
+            })}
+            onOpenSettings={onOpenSettings}
+          />
         </RouteCard>
         <RouteCard
           direction="outgoing"
@@ -204,9 +219,17 @@ function HomeScreen({ onOpenSettings }: HomeScreenProps) {
             },
           ]}
         >
-          <OutgoingControls
-            blocker={outgoingBlocker(settings, readiness)}
-            outputIsCable={outgoingOutput?.isVirtualCable ?? true}
+          <TranslationControls
+            direction="outgoing"
+            blocked={
+              outgoingBlocked && t(`home.outgoing.blocked.${outgoingBlocked}`)
+            }
+            warning={
+              outgoingOutput?.isVirtualCable === false
+                ? t("home.outgoing.notCable")
+                : null
+            }
+            help={t("home.outgoing.help")}
             onOpenSettings={onOpenSettings}
           />
         </RouteCard>

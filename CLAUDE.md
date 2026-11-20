@@ -58,9 +58,11 @@ Out of scope for v1: macOS/Linux, panel translations beyond English/Spanish, voi
   - No voice selection (voice adapts to the speaker), no custom prompts/glossaries, no turn lifecycle.
   - Speech already in the target language may produce silence → keep original audio mixed in (ducked).
   - Price: **$0.034 per audio minute** (both directions active ≈ $4/hour).
-- **Incoming capture:** WASAPI _process loopback_ (`AUDIOCLIENT_ACTIVATION_TYPE_PROCESS_LOOPBACK`), either including a target process tree or excluding our own process tree (avoids feedback loops). No driver needed. `wasapi` 0.27 wraps it (`AudioClient::new_application_loopback_client`); the `windows` crate is only used for the process snapshot, executable descriptions and exit checks.
+- **Incoming capture:** WASAPI _process loopback_ (`AUDIOCLIENT_ACTIVATION_TYPE_PROCESS_LOOPBACK`), either including a target process tree or excluding our own process tree (avoids feedback loops). No driver needed. `wasapi` 0.27 wraps it (`AudioClient::new_application_loopback_client`); the `windows` crate is only used for the process snapshot, executable descriptions, exit checks and per-app session volumes (ducking).
   - The source picker lists apps from the audio sessions (`IAudioSessionManager2`) of every active playback device, grouped by app: a session belongs to the top of its tree, climbing through parents with the same executable (Chrome, Discord) or through WebView2/CEF helpers (new Teams). Settings store the root's executable name (`SourceApp::Process { name }`, compared without case); it is resolved to a PID when capture starts (`source_app_not_running` if no process of it runs).
   - The loopback device has no mix format: the app asks for 48 kHz stereo `f32` (autoconvert) and resamples to 24 kHz mono PCM16 with `rubato` like the mic. Silence keeps flowing while the app is quiet. Capturing one app stops with an error when its root process exits.
+  - Process loopback captures each app **after** its session volume (measured: an exact linear gain on the `f32` samples). LiveDub Voice's own process tree is never captured, so a source app must not be a child of LiveDub Voice.
+- **Ducking (incoming):** while incoming runs, the captured sessions' `ISimpleAudioVolume` (the Windows volume mixer) is set to `original × level` (`originalVolume`, floored at 0.5 % because of the compensation), and the pipeline multiplies the captured audio by `1 / level` so the translator still hears the app at full volume. Apps are ducked after the translator connects and before their capture starts, and restored after the translated tail played (also on errors and on app exit). Sessions are rescanned every 250 ms; in whole-system mode every session except LiveDub Voice's is ducked (system sounds included). Each ducked volume is written to `ducking.json` before it changes; whatever could not be restored (crash, app closed) is restored at the next launch. A volume the user changes by hand while ducked is left alone. A running translation applies a new `originalVolume` when settings are saved.
 - **Outgoing output:** Windows cannot create a virtual microphone without a driver. The app writes translated audio to a virtual cable's playback endpoint; the user selects the cable's recording endpoint as mic in the call/game app.
   - **Driver strategy (v1): driver-agnostic.** LiveDub Voice does not ship or install any driver. The outgoing pipeline writes to whatever output device the user picks. On startup the panel detects known virtual cables (VB-CABLE, Virtual-Audio-Driver, VoiceMeeter, …) and, if none is found, guides the user to install one. Bundling Virtual-Audio-Driver (MIT) as an optional installer component may be revisited later.
 - **Usage data:** the OpenAI Usage/Costs API requires an _Admin key_, so usage is metered locally (minutes per session × price). Optional Admin key support may come later.
@@ -69,9 +71,9 @@ Out of scope for v1: macOS/Linux, panel translations beyond English/Spanish, voi
 
 - **App shell:** Tauri 2.
 - **Core (audio + OpenAI client):** Rust — `tokio`, `tokio-tungstenite`, `wasapi` (WASAPI bindings), `rubato` (resampling), `keyring` 3 with the `windows-native` backend (Credential Manager), `reqwest` 0.12 with rustls and the Windows root store (`rustls-tls-native-roots`, no OpenSSL) as the HTTP client, `serde`/`serde_json` (settings and usage history). _Crates not yet in `Cargo.toml` are proposals; confirm when implementing._
-- **Persistence:** no database. Settings and usage history are plain JSON files in Tauri's app config dir (`%APPDATA%\io.github.fatuking.livedubvoice`, e.g. `settings.json`); the API key lives only in Credential Manager.
+- **Persistence:** no database. Settings and usage history are plain JSON files in Tauri's app config dir (`%APPDATA%\io.github.fatuking.livedubvoice`, e.g. `settings.json`, plus `ducking.json` while app volumes are ducked); the API key lives only in Credential Manager.
 - **Panel (frontend):** React + TypeScript + Vite. Plain CSS with design tokens (no UI framework, Tailwind or CSS-in-JS); Plus Jakarta Sans bundled via `@fontsource-variable`, icons from `lucide-react`. Nothing loaded from a CDN.
-- **Testing:** `cargo test` for the core, Vitest for the panel. `LIVEDUB_FAKE_TRANSLATOR=1` (replay) or `=echo` swaps OpenAI for a free local fake translator. `LIVEDUB_RECORD_DIR=<folder>` records each session (WAVs + events) locally for diagnosing audio quality.
+- **Testing:** `cargo test` for the core, Vitest for the panel. `LIVEDUB_FAKE_TRANSLATOR=1` (replay) or `=echo` swaps OpenAI for a free local fake translator. `LIVEDUB_RECORD_DIR=<folder>` records each session of either direction (WAVs + events) locally for diagnosing audio quality.
 - **CI/CD:** GitHub Actions on `windows-latest` (fmt, clippy, tests, build, release installer).
 
 ## Architecture
@@ -83,7 +85,7 @@ Out of scope for v1: macOS/Linux, panel translations beyond English/Spanish, voi
             └──────────── events (captions, usage, status) ─► Tauri IPC ─► React panel ┘
 ```
 
-- Each direction is an independent pipeline with its own OpenAI WebSocket session.
+- Each direction is an independent pipeline with its own OpenAI WebSocket session; both run on the same engine (`pipeline/translation.rs`), with the direction-specific config and device checks in `pipeline/incoming.rs` / `pipeline/outgoing.rs`.
 - The panel never touches audio or the API key directly; it talks to the core via Tauri commands/events.
 
 ## UI design

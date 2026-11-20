@@ -346,3 +346,64 @@ export function onOutgoingAudioSent(
     handler(event.payload.seconds),
   );
 }
+
+/**
+ * Starts translating the source app (or the whole system minus LiveDub Voice) into the
+ * headphones with the saved `incoming` settings, ducking the original audio while it runs. Does
+ * nothing if it already runs.
+ *
+ * Rejects with an {@link AppError}: `"no_api_key"`, `"device_missing"`,
+ * `"source_app_not_running"`, `"audio"`, or a translator code such as `"openai_auth"`.
+ */
+export function startIncoming(): Promise<void> {
+  return invoke<void>("start_incoming");
+}
+
+/** Stops the incoming translation (if it runs), resolving once it has stopped. */
+export function stopIncoming(): Promise<void> {
+  return invoke<void>("stop_incoming");
+}
+
+/** The incoming translation's latest status. */
+export function getIncomingStatus(): Promise<PipelineStatus> {
+  return invoke<PipelineStatus>("get_incoming_status");
+}
+
+/** Calls `handler` each time the incoming translation's status changes. */
+export function onIncomingStatus(
+  handler: (status: PipelineStatus) => void,
+): Promise<UnlistenFn> {
+  return listen<PipelineStatus>("incoming-status", (event) =>
+    handler(event.payload),
+  );
+}
+
+/**
+ * Calls `handler` with the level of the captured audio (as the translator hears it, before
+ * ducking), ~20 times per second while live.
+ */
+export function onIncomingLevel(
+  handler: (level: InputLevel) => void,
+): Promise<UnlistenFn> {
+  return listen<InputLevel>("incoming-level", (event) =>
+    handler(event.payload),
+  );
+}
+
+/** Calls `handler` with each new piece of translated text (what the user hears). */
+export function onIncomingTranscript(
+  handler: (delta: string) => void,
+): Promise<UnlistenFn> {
+  return listen<{ delta: string }>("incoming-transcript", (event) =>
+    handler(event.payload.delta),
+  );
+}
+
+/** Calls `handler` with the seconds of app audio sent since start, every second. */
+export function onIncomingAudioSent(
+  handler: (seconds: number) => void,
+): Promise<UnlistenFn> {
+  return listen<{ seconds: number }>("incoming-audio-sent", (event) =>
+    handler(event.payload.seconds),
+  );
+}

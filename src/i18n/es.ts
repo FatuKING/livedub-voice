@@ -31,6 +31,17 @@ export const es: Messages = {
       eyebrow: "Entrante · voces de los demás",
       title: "Escuchar a los demás en {language}",
       start: "Iniciar entrante",
+      stop: "Detener entrante",
+      level: "Audio de la app",
+      captions: "Lo que llega a tus auriculares",
+      captionsEmpty: "Aquí aparece la traducción de lo que dicen los demás.",
+      help: "Mientras está activa, el audio original suena al {volume} debajo de la traducción. Vuelve a su volumen al detenerla.",
+      blocked: {
+        noApiKey: "Para empezar, falta la API key de OpenAI en Configuración.",
+        outputMissing:
+          "Los auriculares elegidos en Configuración no están conectados. Hay que conectarlos o elegir otra salida.",
+      },
+      stopped: "La traducción entrante se detuvo: {error}",
     },
     outgoing: {
       eyebrow: "Saliente · tu voz",
@@ -51,8 +62,8 @@ export const es: Messages = {
           "La salida elegida en Configuración no está conectada. Hay que instalar o conectar el cable virtual, o elegir otra salida.",
       },
       stopped: "La traducción saliente se detuvo: {error}",
-      goToSettings: "Ir a Configuración",
     },
+    goToSettings: "Ir a Configuración",
     status: {
       idle: "Apagado",
       connecting: "Conectando…",
@@ -60,9 +71,6 @@ export const es: Messages = {
       stopping: "Terminando la traducción…",
       error: "Error",
     },
-    comingSoon: "Próximamente",
-    comingSoonNote:
-      "La traducción en vivo todavía no está disponible. Llega en una próxima versión.",
     listensTo: "Escucha",
     playsOn: "Suena en",
     sendsTo: "Envía a",
@@ -119,7 +127,7 @@ export const es: Messages = {
       headphonesHint: "Donde suena la traducción.",
       originalVolume: "Volumen del audio original",
       originalVolumeHint:
-        "Cuánto se siguen oyendo las voces originales debajo de la traducción.",
+        "Cuánto se sigue oyendo el audio original debajo de la traducción (con Todo el sistema, se bajan todas las apps). Vuelve a su volumen al detener la traducción.",
     },
     outgoing: {
       eyebrow: "Saliente",

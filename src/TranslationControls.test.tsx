@@ -2,9 +2,9 @@ import { act, fireEvent, screen } from "@testing-library/react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type EventCallback } from "@tauri-apps/api/event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import OutgoingControls, {
-  type OutgoingControlsProps,
-} from "./OutgoingControls";
+import TranslationControls, {
+  type TranslationControlsProps,
+} from "./TranslationControls";
 import type { PipelineStatus } from "./lib/api";
 import { render } from "./test/i18n";
 
@@ -32,12 +32,16 @@ function emitStatus(status: PipelineStatus) {
   emit("outgoing-status", status);
 }
 
-function renderControls(props: Partial<OutgoingControlsProps> = {}) {
+const OUTGOING_HELP =
+  'In Discord / WhatsApp Web choose "CABLE Output" as your microphone.';
+
+function renderControls(props: Partial<TranslationControlsProps> = {}) {
   const onOpenSettings = vi.fn();
   render(
-    <OutgoingControls
-      blocker={null}
-      outputIsCable
+    <TranslationControls
+      direction="outgoing"
+      blocked={null}
+      help={OUTGOING_HELP}
       onOpenSettings={onOpenSettings}
       {...props}
     />,
@@ -53,7 +57,7 @@ beforeEach(() => {
   currentStatus = { state: "idle", error: null };
   invokeMock.mockReset();
   invokeMock.mockImplementation((command) =>
-    command === "get_outgoing_status"
+    command === "get_outgoing_status" || command === "get_incoming_status"
       ? Promise.resolve(currentStatus)
       : Promise.resolve(undefined),
   );
@@ -66,7 +70,7 @@ beforeEach(() => {
   });
 });
 
-describe("OutgoingControls", () => {
+describe("TranslationControls (outgoing)", () => {
   it("starts idle with an empty caption area", async () => {
     renderControls();
     await subscribed();
@@ -82,11 +86,7 @@ describe("OutgoingControls", () => {
       "aria-valuenow",
       "0",
     );
-    expect(
-      screen.getByText(
-        'In Discord / WhatsApp Web choose "CABLE Output" as your microphone.',
-      ),
-    ).toBeInTheDocument();
+    expect(screen.getByText(OUTGOING_HELP)).toBeInTheDocument();
   });
 
   it("goes through connecting and live, showing the level and captions", async () => {
@@ -217,18 +217,9 @@ describe("OutgoingControls", () => {
     ).toBeInTheDocument();
   });
 
-  it.each([
-    ["noApiKey", "Add your OpenAI API key in Settings to start."],
-    [
-      "noOutput",
-      "Choose the virtual cable (for example CABLE Input) as the output in Settings to start.",
-    ],
-    [
-      "outputMissing",
-      "The output chosen in Settings is not connected. Install or plug in the virtual cable, or choose another output.",
-    ],
-  ] as const)("disables Start and explains why (%s)", async (blocker, text) => {
-    const { onOpenSettings } = renderControls({ blocker });
+  it("disables Start and explains why", async () => {
+    const text = "Add your OpenAI API key in Settings to start.";
+    const { onOpenSettings } = renderControls({ blocked: text });
     await subscribed();
 
     const start = screen.getByRole("button", { name: "Start outgoing" });
@@ -243,7 +234,9 @@ describe("OutgoingControls", () => {
 
   it("lets a running translation be stopped even when Start would be blocked", async () => {
     currentStatus = { state: "live", error: null };
-    renderControls({ blocker: "noApiKey" });
+    renderControls({
+      blocked: "Add your OpenAI API key in Settings to start.",
+    });
 
     expect(
       await screen.findByRole("button", { name: "Stop outgoing" }),
@@ -253,8 +246,11 @@ describe("OutgoingControls", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("warns when the output is not a known virtual cable", async () => {
-    renderControls({ outputIsCable: false });
+  it("shows a warning that does not block Start", async () => {
+    renderControls({
+      warning:
+        "The output in Settings is not a known virtual cable. Others only hear you if their app records from it.",
+    });
     await subscribed();
 
     expect(screen.getByRole("status")).toHaveTextContent(
@@ -267,9 +263,10 @@ describe("OutgoingControls", () => {
 
   it("stops listening when it goes away, without stopping the translation", async () => {
     const view = render(
-      <OutgoingControls
-        blocker={null}
-        outputIsCable
+      <TranslationControls
+        direction="outgoing"
+        blocked={null}
+        help={OUTGOING_HELP}
         onOpenSettings={vi.fn()}
       />,
     );
@@ -279,5 +276,85 @@ describe("OutgoingControls", () => {
 
     await vi.waitFor(() => expect(unlisten).toHaveBeenCalledTimes(3));
     expect(invokeMock).not.toHaveBeenCalledWith("stop_outgoing");
+  });
+});
+
+describe("TranslationControls (incoming)", () => {
+  function renderIncoming(props: Partial<TranslationControlsProps> = {}) {
+    return renderControls({
+      direction: "incoming",
+      help: "While it runs, the original audio plays at 20% under the translation.",
+      ...props,
+    });
+  }
+
+  it("starts and stops the incoming translation, with its own level and captions", async () => {
+    renderIncoming();
+    await subscribed();
+
+    expect(screen.getByText("Off")).toBeInTheDocument();
+    expect(screen.getByRole("meter", { name: "App audio" })).toHaveAttribute(
+      "aria-valuenow",
+      "0",
+    );
+    expect(
+      screen.getByText("The translation of what others say shows up here."),
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Start incoming" }));
+    expect(invokeMock).toHaveBeenCalledWith("start_incoming");
+    emit("incoming-status", { state: "live", error: null });
+    expect(await screen.findByText("Live")).toBeInTheDocument();
+
+    emit("incoming-level", { rms: 0.1, peak: 0.5 });
+    expect(screen.getByRole("meter")).toHaveAttribute("aria-valuenow", "67");
+    emit("incoming-transcript", { delta: "Hola" });
+    emit("incoming-transcript", { delta: " a todos" });
+    expect(screen.getByText("Hola a todos")).toBeInTheDocument();
+    expect(screen.getByText("What you hear")).toBeInTheDocument();
+
+    await vi.waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Stop incoming" }),
+      ).toBeEnabled(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Stop incoming" }));
+    await screen.findByRole("button", { name: "Start incoming" });
+    expect(invokeMock).toHaveBeenCalledWith("stop_incoming");
+    expect(invokeMock).not.toHaveBeenCalledWith("start_outgoing");
+  });
+
+  it("ignores the outgoing direction's events", async () => {
+    renderIncoming();
+    await subscribed();
+
+    expect(handlers.has("outgoing-status")).toBe(false);
+    expect([...handlers.keys()].sort()).toEqual([
+      "incoming-level",
+      "incoming-status",
+      "incoming-transcript",
+    ]);
+  });
+
+  it("explains why the app could not be captured", async () => {
+    invokeMock.mockImplementation((command) => {
+      if (command === "get_incoming_status")
+        return Promise.resolve(currentStatus);
+      if (command === "start_incoming")
+        // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors
+        return Promise.reject({
+          code: "source_app_not_running",
+          message: "the chosen app is not running: Discord.exe",
+        });
+      return Promise.resolve(undefined);
+    });
+    renderIncoming();
+    await subscribed();
+
+    fireEvent.click(screen.getByRole("button", { name: "Start incoming" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "The incoming translation stopped: The app chosen in Settings is not running",
+    );
   });
 });

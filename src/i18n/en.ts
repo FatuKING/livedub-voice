@@ -35,6 +35,17 @@ export const en = {
       eyebrow: "Incoming · others → you",
       title: "Hear others in {language}",
       start: "Start incoming",
+      stop: "Stop incoming",
+      level: "App audio",
+      captions: "What you hear",
+      captionsEmpty: "The translation of what others say shows up here.",
+      help: "While it runs, the original audio plays at {volume} under the translation. It goes back to its volume when you stop.",
+      blocked: {
+        noApiKey: "Add your OpenAI API key in Settings to start.",
+        outputMissing:
+          "The headphones chosen in Settings are not connected. Plug them in, or choose another output.",
+      },
+      stopped: "The incoming translation stopped: {error}",
     },
     outgoing: {
       eyebrow: "Outgoing · you → others",
@@ -55,8 +66,8 @@ export const en = {
           "The output chosen in Settings is not connected. Install or plug in the virtual cable, or choose another output.",
       },
       stopped: "The outgoing translation stopped: {error}",
-      goToSettings: "Go to Settings",
     },
+    goToSettings: "Go to Settings",
     status: {
       idle: "Off",
       connecting: "Connecting…",
@@ -64,9 +75,6 @@ export const en = {
       stopping: "Finishing translation…",
       error: "Error",
     },
-    comingSoon: "Coming soon",
-    comingSoonNote:
-      "Live translation is not available yet. It is coming in a next version.",
     listensTo: "Listens to",
     playsOn: "Plays on",
     sendsTo: "Sends to",
@@ -124,7 +132,7 @@ export const en = {
       headphonesHint: "Where you hear the translation.",
       originalVolume: "Original audio volume",
       originalVolumeHint:
-        "How loud the original voices stay under the translation.",
+        "How loud the original audio stays under the translation (with Whole system, every app is lowered). It goes back to its volume when the translation stops.",
     },
     outgoing: {
       eyebrow: "Outgoing",

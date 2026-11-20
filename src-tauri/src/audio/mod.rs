@@ -6,12 +6,13 @@
 //! or the whole system minus LiveDub Voice's own tree, to avoid feedback loops), plays audio
 //! ([`playback`]) and tests the microphone ([`monitor`]), and resamples to and from the 24 kHz
 //! mono PCM16 format the translator expects ([`resample`]). Audio threads hand samples to the
-//! rest of the app through lock-free bounded queues ([`ring`]). It will also hold the mix of the
-//! translated audio with the ducked original for the user's headphones.
+//! rest of the app through lock-free bounded queues ([`ring`]). While the incoming direction
+//! runs, [`ducking`] lowers the captured apps' own volume under the translation.
 
 pub mod apps;
 pub mod capture;
 pub mod devices;
+pub mod ducking;
 pub mod format;
 pub mod level;
 pub mod loopback;

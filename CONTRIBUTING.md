@@ -54,22 +54,30 @@ To test translation end to end you need your own OpenAI API key and a virtual au
 
 ### Troubleshooting audio quality
 
-Every outgoing session logs a summary when it stops (`outgoing session summary`, `outgoing latency`, `outgoing microphone summary`): jitter underruns and dropped samples, the largest backlog of translated audio, how many output deltas arrived, the audio sent and received, the latency per utterance (min / median / max) and the microphone's peak, RMS and clipping, with warnings for a clipping or too quiet microphone, a silent channel or channels that cancel out. Logs live in `%LOCALAPPDATA%\io.github.fatuking.livedubvoice\logs`. Use `RUST_LOG=livedub_voice_lib=debug` for one line per utterance.
+Every session of either direction logs a summary when it stops (`session summary`, `latency`, `input summary`, each with `direction` = `incoming` or `outgoing`): jitter underruns and dropped samples, the largest backlog of translated audio, how many output deltas arrived, the audio sent and received, the latency per utterance (min / median / max) and the input's peak, RMS and clipping. Outgoing sessions also warn about a clipping or too quiet microphone, a silent channel or channels that cancel out. Incoming sessions log when the original audio is ducked and restored (`ducking started`, `ducking stopped`). Logs live in `%LOCALAPPDATA%\io.github.fatuking.livedubvoice\logs`. Use `RUST_LOG=livedub_voice_lib=debug` for one line per utterance.
 
-For a closer look, set `LIVEDUB_RECORD_DIR` to a folder before starting the app. Each outgoing session then writes a subfolder `outgoing-<unix seconds>` with:
+For a closer look, set `LIVEDUB_RECORD_DIR` to a folder before starting the app. Each session then writes a subfolder `outgoing-<unix seconds>` or `incoming-<unix seconds>` with:
 
 | File           | Contents                                                                                                                                                       |
 | -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `sent.wav`     | The microphone audio actually sent to the translator (PCM16 mono 24 kHz, silence included)                                                                     |
+| `sent.wav`     | The audio actually sent to the translator: the microphone, or the captured apps after the ducking compensation (PCM16 mono 24 kHz, silence included)           |
 | `received.wav` | The translated audio as received, on a wall-clock timeline: gaps between deltas are silence, so late deltas are audible                                        |
-| `cable.wav`    | What was written to the virtual cable, in the cable's format                                                                                                   |
+| `output.wav`   | What was played on the virtual cable (outgoing) or the headphones (incoming), in that device's format                                                          |
 | `events.jsonl` | Timestamped events: each 200 ms block sent (RMS/peak), each output delta, transcript deltas, speech start/end, latency, jitter stats every second, the summary |
 
 ```powershell
 $env:LIVEDUB_RECORD_DIR = "$HOME\livedub-recordings"; pnpm tauri dev
 ```
 
-This is a **local-only debugging tool**, off by default: nothing is uploaded, but the files contain your voice and the transcript of what you said, so only share them with people you trust and delete them when you are done.
+This is a **local-only debugging tool**, off by default: nothing is uploaded, but the files contain your voice (or the other participants') and the transcript, so only share them with people you trust and delete them when you are done.
+
+Hardware checks that are skipped by default (they play a quiet tone on the default output):
+
+```powershell
+cargo test --manifest-path src-tauri/Cargo.toml session_volume_scales_the_loopback_capture -- --ignored --nocapture
+cargo test --manifest-path src-tauri/Cargo.toml ducker_ducks_and_restores_a_real_app -- --ignored --nocapture
+cargo test --manifest-path src-tauri/Cargo.toml incoming_from_a_tone_player -- --ignored --nocapture
+```
 
 ## Branches
 
