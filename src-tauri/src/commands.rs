@@ -20,6 +20,7 @@ use crate::pipeline::{
 };
 use crate::settings::{Settings, SettingsStore};
 use crate::translator::{FakeTranslator, OpenAiTranslator, Translator};
+use crate::usage::{UsageMeter, UsageNotice, UsageNotify, UsageSnapshot, metered_sink};
 
 /// Product name shown to the user.
 pub const APP_NAME: &str = "LiveDub Voice";
@@ -67,17 +68,86 @@ pub fn get_settings(store: State<'_, SettingsStore>) -> AppResult<Settings> {
 
 /// Validates and saves the settings, returning what was saved.
 ///
-/// A running incoming translation applies the new original-audio volume at once; every other
-/// change applies the next time its direction starts (see [`crate::pipeline::manager`]).
+/// A running incoming translation applies the new original-audio volume at once, and the
+/// spending cap applies at once (a `usage-updated` event follows); every other change applies
+/// the next time its direction starts (see [`crate::pipeline::manager`]).
 #[tauri::command]
 pub fn save_settings(
+    app: AppHandle,
     store: State<'_, SettingsStore>,
     pipelines: State<'_, PipelineManager>,
+    meter: State<'_, Arc<UsageMeter>>,
     settings: Settings,
 ) -> AppResult<Settings> {
     let saved = store.save(settings)?;
     pipelines.set_original_volume(saved.incoming.original_volume);
+    meter.set_cap(saved.spending_cap);
+    emit_usage(&app, &meter);
     Ok(saved)
+}
+
+/// Event with the usage (`UsageSnapshot`): whenever it changes, about once a second per running
+/// direction.
+pub const USAGE_UPDATED_EVENT: &str = "usage-updated";
+/// Event sent when the spending cap is reached and the running translations are being stopped;
+/// payload `CapStatus`.
+pub const SPENDING_CAP_REACHED_EVENT: &str = "spending-cap-reached";
+
+/// Usage of the current sessions, today, this month and per day, plus the spending cap status.
+#[tauri::command]
+pub fn get_usage(meter: State<'_, Arc<UsageMeter>>) -> UsageSnapshot {
+    meter.snapshot()
+}
+
+/// Keeps translating over the spending cap for the rest of today (local time). Returns the new
+/// usage snapshot.
+#[tauri::command]
+pub async fn override_spending_cap(
+    app: AppHandle,
+    meter: State<'_, Arc<UsageMeter>>,
+) -> AppResult<UsageSnapshot> {
+    meter.override_today();
+    tracing::info!("spending cap overridden for today");
+    let flushing = Arc::clone(meter.inner());
+    run_blocking("usage history", move || Ok(flushing.flush()?)).await?;
+    emit_usage(&app, &meter);
+    Ok(meter.snapshot())
+}
+
+fn emit_usage(app: &AppHandle, meter: &UsageMeter) {
+    if let Err(error) = app.emit(USAGE_UPDATED_EVENT, meter.snapshot()) {
+        tracing::warn!(%error, "could not emit the usage");
+    }
+}
+
+/// Writes the usage history off the async runtime, logging a failure.
+fn flush_usage_in_background(meter: Arc<UsageMeter>) {
+    tauri::async_runtime::spawn_blocking(move || {
+        if let Err(error) = meter.flush() {
+            tracing::warn!(%error, "could not write the usage history");
+        }
+    });
+}
+
+/// Turns the meter's notices into panel events, disk writes and, when the cap is reached, a
+/// graceful stop of both directions through the manager.
+fn usage_notify(app: AppHandle, meter: Arc<UsageMeter>) -> UsageNotify {
+    Arc::new(move |notice| match notice {
+        UsageNotice::Updated => emit_usage(&app, &meter),
+        UsageNotice::SessionEnded => {
+            emit_usage(&app, &meter);
+            flush_usage_in_background(Arc::clone(&meter));
+        }
+        UsageNotice::CapReached(status) => {
+            if let Err(error) = app.emit(SPENDING_CAP_REACHED_EVENT, status) {
+                tracing::warn!(%error, "could not emit the spending cap event");
+            }
+            let app = app.clone();
+            tauri::async_runtime::spawn(async move {
+                app.state::<PipelineManager>().stop_all().await;
+            });
+        }
+    })
 }
 
 /// Result of `save_api_key`: the key is stored even when the check could not reach OpenAI.
@@ -288,14 +358,19 @@ pub struct AudioSent {
 /// virtual cable is allowed, with a warning in the log. Emits the `outgoing-*` events while it
 /// runs; reconnects on its own when the connection drops, and stops on fatal errors (device
 /// unplugged, key rejected, no quota, no model access) or when reconnecting fails.
+///
+/// Refused with `spending_cap_reached` (no status event) while the spending cap is reached and
+/// not overridden for today.
 #[tauri::command]
 pub async fn start_outgoing(
     app: AppHandle,
     store: State<'_, SettingsStore>,
     credentials: State<'_, Credentials>,
     pipelines: State<'_, PipelineManager>,
+    meter: State<'_, Arc<UsageMeter>>,
 ) -> AppResult<()> {
-    let events = event_sink(app, OUTGOING_EVENTS);
+    meter.check_start()?;
+    let events = metered_events(app, meter.inner(), Direction::Outgoing, OUTGOING_EVENTS);
     pipelines
         .start(Direction::Outgoing, events, async {
             let settings = store.get()?.outgoing;
@@ -336,6 +411,9 @@ pub fn get_outgoing_status(pipelines: State<'_, PipelineManager>) -> PipelineSta
 /// connection drops (the apps stay ducked meanwhile), and stops on fatal errors (headphones
 /// unplugged, captured app closed, key rejected, no quota) or when reconnecting fails. The
 /// ducked apps get their volume back whenever it stops.
+///
+/// Refused with `spending_cap_reached` (no status event) while the spending cap is reached and
+/// not overridden for today.
 #[tauri::command]
 pub async fn start_incoming(
     app: AppHandle,
@@ -343,8 +421,10 @@ pub async fn start_incoming(
     credentials: State<'_, Credentials>,
     journal: State<'_, DuckingJournal>,
     pipelines: State<'_, PipelineManager>,
+    meter: State<'_, Arc<UsageMeter>>,
 ) -> AppResult<()> {
-    let events = event_sink(app, INCOMING_EVENTS);
+    meter.check_start()?;
+    let events = metered_events(app, meter.inner(), Direction::Incoming, INCOMING_EVENTS);
     pipelines
         .start(Direction::Incoming, events, async {
             let settings = store.get()?.incoming;
@@ -399,6 +479,9 @@ pub fn shut_down_pipelines(app: &AppHandle) {
     if let Err(error) = audio::ducking::recover(journal) {
         tracing::warn!(%error, "could not restore the ducked apps on exit");
     }
+    if let Err(error) = app.state::<Arc<UsageMeter>>().flush() {
+        tracing::warn!(%error, "could not write the usage history on exit");
+    }
 }
 
 /// The fake translator when `LIVEDUB_FAKE_TRANSLATOR` is set, OpenAI with the stored key
@@ -410,6 +493,17 @@ fn translator(credentials: &Credentials) -> AppResult<Arc<dyn Translator>> {
     }
     let key = credentials.load()?.ok_or(AppError::NoApiKey)?;
     Ok(Arc::new(OpenAiTranslator::new(key)))
+}
+
+/// Meters a direction's events (see [`crate::usage`]) and forwards them to the panel.
+fn metered_events(
+    app: AppHandle,
+    meter: &Arc<UsageMeter>,
+    direction: Direction,
+    names: EventNames,
+) -> EventSink {
+    let notify = usage_notify(app.clone(), Arc::clone(meter));
+    metered_sink(Arc::clone(meter), direction, event_sink(app, names), notify)
 }
 
 /// Forwards a pipeline's events to the panel.

@@ -5,10 +5,13 @@ pub mod commands;
 pub mod credentials;
 pub mod error;
 pub mod logging;
+pub mod persist;
 pub mod pipeline;
 pub mod settings;
 pub mod translator;
 pub mod usage;
+
+use std::sync::Arc;
 
 use tauri::Manager;
 
@@ -31,7 +34,28 @@ pub fn run() {
             let settings_path = config_dir.join(settings::SETTINGS_FILE_NAME);
             let store = settings::SettingsStore::load(settings_path);
             tracing::info!(path = %store.path().display(), "settings loaded");
+            let cap = store.get()?.spending_cap;
             app.manage(store);
+
+            // Usage history: written every FLUSH_INTERVAL while it changes (and when a session
+            // ends, and on exit).
+            let meter = Arc::new(usage::UsageMeter::new(
+                Some(config_dir.join(usage::USAGE_FILE_NAME)),
+                Arc::new(usage::SystemClock),
+                cap,
+            ));
+            app.manage(Arc::clone(&meter));
+            tauri::async_runtime::spawn(async move {
+                let mut tick = tokio::time::interval(usage::FLUSH_INTERVAL);
+                loop {
+                    tick.tick().await;
+                    let meter = Arc::clone(&meter);
+                    let flushed = tauri::async_runtime::spawn_blocking(move || meter.flush()).await;
+                    if let Ok(Err(error)) = flushed {
+                        tracing::warn!(%error, "could not write the usage history");
+                    }
+                }
+            });
 
             app.manage(credentials::Credentials::system());
             app.manage(credentials::validation::KeyValidator::new()?);
@@ -77,7 +101,9 @@ pub fn run() {
             commands::get_outgoing_status,
             commands::start_incoming,
             commands::stop_incoming,
-            commands::get_incoming_status
+            commands::get_incoming_status,
+            commands::get_usage,
+            commands::override_spending_cap
         ])
         .build(tauri::generate_context!());
 

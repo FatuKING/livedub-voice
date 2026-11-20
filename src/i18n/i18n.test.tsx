@@ -155,7 +155,7 @@ describe("translateError", () => {
 
 describe("I18nProvider", () => {
   const settings: Settings = {
-    version: 2,
+    version: 3,
     uiLanguage: "system",
     incoming: {
       enabled: false,
@@ -170,6 +170,7 @@ describe("I18nProvider", () => {
       inputDeviceId: null,
       outputDeviceId: null,
     },
+    spendingCap: { dailyUsd: null, monthlyUsd: null },
   };
 
   beforeEach(() => {

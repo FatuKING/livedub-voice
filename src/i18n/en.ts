@@ -239,6 +239,9 @@ export const en = {
     title: "Usage",
     description:
       "Minutes translated and estimated cost, per session and over time.",
+    estimate:
+      "Estimated on this computer at {price} per audio minute of each direction. This is not your OpenAI bill: the real one is on platform.openai.com.",
+    loadError: "Could not load usage: {error}",
     emptyTitle: "No usage yet",
     emptyText:
       "Once you start translating, the minutes for each direction and their estimated cost show up here. They are counted on this computer at {price} per audio minute; LiveDub Voice does not read your OpenAI billing.",
@@ -246,6 +249,81 @@ export const en = {
       one: "{count} minute",
       other: "{count} minutes",
     },
+    minutesShort: "{minutes} min",
+    session: {
+      eyebrow: "This session",
+      incoming: "Incoming · others → you",
+      outgoing: "Outgoing · you → others",
+      live: "Live",
+      last: "Last session",
+      none: "Not started since LiveDub Voice opened.",
+      minutes: "Minutes",
+      cost: "Estimated cost",
+    },
+    totals: {
+      eyebrow: "Totals",
+      title: "Today and this month",
+      today: "Today",
+      month: "This month",
+      incoming: "Incoming",
+      outgoing: "Outgoing",
+      cost: "Estimated cost",
+    },
+    history: {
+      eyebrow: "History",
+      title: "By day",
+      caption: "Minutes and estimated cost per day, newest first",
+      day: "Day",
+      incoming: "Incoming",
+      outgoing: "Outgoing",
+      cost: "Cost",
+    },
+    cap: {
+      eyebrow: "Budget",
+      title: "Spending cap",
+      ariaLabel: "Spending cap",
+      intro:
+        "Stops the translations when the estimated cost reaches a limit, and warns at 80 %. Leave a field empty for no limit.",
+      daily: "Daily cap (USD)",
+      dailyHint: "Starts over at midnight, your local time.",
+      monthly: "Monthly cap (USD)",
+      monthlyHint: "Starts over on the 1st of each month.",
+      placeholder: "No limit",
+      save: "Save cap",
+      saving: "Saving…",
+      saved: "Spending cap saved.",
+      invalid:
+        "Enter an amount between 0.01 and 10,000 US dollars, or leave it empty for no limit.",
+      loadError: "Could not load the spending cap: {error}",
+      saveError: "Could not save the spending cap: {error}",
+      openaiBudget: "Set a budget in your OpenAI account",
+      openaiHint:
+        "This cap only covers LiveDub Voice on this computer, and the cost is estimated. A budget in the OpenAI dashboard is the real safety net.",
+      openError: "Could not open the OpenAI dashboard: {error}",
+    },
+  },
+
+  /** The spending cap's notices, on Home, Usage and next to Start. */
+  cap: {
+    period: {
+      daily: "daily",
+      monthly: "monthly",
+    },
+    warning:
+      "You have used {percent} of your {period} spending cap ({spent} of {limit}).",
+    reached:
+      "You reached your {period} spending cap ({spent} of {limit}). Translations stay off until you raise the cap or keep going for today.",
+    stopped:
+      "Translation stopped: you reached your {period} spending cap ({spent} of {limit}).",
+    overridden:
+      "Over your {period} spending cap ({spent} of {limit}): translating anyway until midnight.",
+    startBlocked:
+      "Your spending cap is reached. Keep translating for the rest of today?",
+    startBlockedLabel: "Spending cap reached",
+    continueToday: "Keep going today",
+    raise: "Raise the cap",
+    cancel: "Cancel",
+    continueError: "Could not keep going over the cap: {error}",
   },
 
   /** Messages for the `code` of an `AppError` from the core. `{detail}` is the core's detail. */
@@ -278,5 +356,7 @@ export const en = {
     device_missing: "A device chosen in Settings is not connected ({detail}).",
     source_app_not_running:
       "The app chosen in Settings is not running ({detail}). Open it, or translate the whole system.",
+    spending_cap_reached:
+      "Your spending cap is reached ({detail}). Raise it on the Usage screen, or keep going for today.",
   },
 } as const;

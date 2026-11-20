@@ -1,8 +1,7 @@
 //! User settings.
 //!
-//! The settings (panel language, language direction, devices, source app, ducking volume) are
-//! stored as a JSON
-//! file (`settings.json`) in Tauri's app config dir
+//! The settings (panel language, language direction, devices, source app, ducking volume,
+//! spending cap) are stored as a JSON file (`settings.json`) in Tauri's app config dir
 //! (`%APPDATA%\io.github.fatuking.livedubvoice`). The OpenAI API key is never part of this file:
 //! it lives only in Windows Credential Manager.
 //!
@@ -10,25 +9,29 @@
 //! `AppHandle`; [`SettingsStore`] wraps it with the in-memory copy kept in Tauri managed state.
 
 use std::fs;
-use std::io::{self, Write};
+use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
 
 use crate::error::{AppError, AppResult};
+use crate::persist::{with_suffix, write_atomic};
 
 /// Current version of the settings file format. Bump it when the shape changes, and add the
 /// step from the previous version to [`migrate`].
 ///
-/// History: 1 = initial format; 2 = adds `uiLanguage`.
-pub const SETTINGS_VERSION: u32 = 2;
+/// History: 1 = initial format; 2 = adds `uiLanguage`; 3 = adds `spendingCap`.
+pub const SETTINGS_VERSION: u32 = 3;
 
 /// Name of the settings file inside the app config dir.
 pub const SETTINGS_FILE_NAME: &str = "settings.json";
 
 /// Highest allowed original-audio volume (percent).
 pub const MAX_ORIGINAL_VOLUME: u8 = 100;
+
+/// Highest spending cap accepted, in US dollars (per day or per month).
+pub const MAX_SPENDING_CAP_USD: f64 = 10_000.0;
 
 /// A target language of the translator (`session.audio.output.language`).
 ///
@@ -185,8 +188,19 @@ impl Default for OutgoingSettings {
     }
 }
 
+/// The in-app spending cap: translations stop when the estimated cost of the day or the month
+/// reaches it (see [`crate::usage`]). Off by default.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct SpendingCapSettings {
+    /// Most to spend per local calendar day, in US dollars; `None` = no daily cap.
+    pub daily_usd: Option<f64>,
+    /// Most to spend per local calendar month, in US dollars; `None` = no monthly cap.
+    pub monthly_usd: Option<f64>,
+}
+
 /// All user settings, as stored in `settings.json`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct Settings {
     /// File format version, for future migrations.
@@ -195,6 +209,7 @@ pub struct Settings {
     pub ui_language: UiLanguage,
     pub incoming: IncomingSettings,
     pub outgoing: OutgoingSettings,
+    pub spending_cap: SpendingCapSettings,
 }
 
 impl Default for Settings {
@@ -204,6 +219,7 @@ impl Default for Settings {
             ui_language: UiLanguage::default(),
             incoming: IncomingSettings::default(),
             outgoing: OutgoingSettings::default(),
+            spending_cap: SpendingCapSettings::default(),
         }
     }
 }
@@ -231,7 +247,20 @@ impl Settings {
         check_device_id("incoming output device", &self.incoming.output_device_id)?;
         check_device_id("outgoing input device", &self.outgoing.input_device_id)?;
         check_device_id("outgoing output device", &self.outgoing.output_device_id)?;
+        check_cap("daily spending cap", self.spending_cap.daily_usd)?;
+        check_cap("monthly spending cap", self.spending_cap.monthly_usd)?;
         Ok(())
+    }
+}
+
+fn check_cap(label: &str, cap: Option<f64>) -> AppResult<()> {
+    match cap {
+        Some(usd) if !(usd.is_finite() && usd > 0.0 && usd <= MAX_SPENDING_CAP_USD) => {
+            Err(invalid(format!(
+                "{label} must be more than 0 and at most {MAX_SPENDING_CAP_USD} USD, got {usd}"
+            )))
+        }
+        _ => Ok(()),
     }
 }
 
@@ -270,6 +299,13 @@ pub fn migrate(value: &mut serde_json::Value) -> Result<(), String> {
             .entry("uiLanguage")
             .or_insert_with(|| serde_json::json!("system"));
         version = 2;
+    }
+    if version == 2 {
+        // 2 → 3: the spending cap, off.
+        object
+            .entry("spendingCap")
+            .or_insert_with(|| serde_json::json!({ "dailyUsd": null, "monthlyUsd": null }));
+        version = 3;
     }
 
     object.insert("version".into(), version.into());
@@ -360,38 +396,16 @@ pub fn load(path: &Path) -> Settings {
 /// Saves `settings` to `path` atomically: writes a temp file in the same directory, flushes it
 /// to disk and renames it over the target. Creates the parent directory if needed.
 pub fn save(path: &Path, settings: &Settings) -> AppResult<()> {
-    if let Some(dir) = path.parent() {
-        fs::create_dir_all(dir)?;
-    }
-    let json = serde_json::to_string_pretty(settings)
+    let mut json = serde_json::to_string_pretty(settings)
         .map_err(|error| AppError::Internal(format!("could not serialize settings: {error}")))?;
-
-    let tmp = with_suffix(path, ".tmp");
-    let write_result = (|| -> io::Result<()> {
-        let mut file = fs::File::create(&tmp)?;
-        file.write_all(json.as_bytes())?;
-        file.write_all(b"\n")?;
-        file.sync_all()?;
-        drop(file);
-        fs::rename(&tmp, path)
-    })();
-
-    if let Err(error) = write_result {
-        let _ = fs::remove_file(&tmp);
-        return Err(error.into());
-    }
+    json.push('\n');
+    write_atomic(path, json.as_bytes())?;
     Ok(())
 }
 
 /// Path of the backup kept for an invalid settings file.
 pub fn backup_path(path: &Path) -> PathBuf {
     with_suffix(path, ".bak")
-}
-
-fn with_suffix(path: &Path, suffix: &str) -> PathBuf {
-    let mut name = path.as_os_str().to_owned();
-    name.push(suffix);
-    PathBuf::from(name)
 }
 
 /// Settings file location plus the current settings, kept in Tauri managed state.
@@ -452,7 +466,7 @@ mod tests {
         assert_eq!(
             serde_json::to_value(Settings::default()).unwrap(),
             json!({
-                "version": 2,
+                "version": 3,
                 "uiLanguage": "system",
                 "incoming": {
                     "enabled": false,
@@ -466,7 +480,8 @@ mod tests {
                     "targetLanguage": "en",
                     "inputDeviceId": null,
                     "outputDeviceId": null
-                }
+                },
+                "spendingCap": { "dailyUsd": null, "monthlyUsd": null }
             })
         );
     }
@@ -588,7 +603,14 @@ mod tests {
 
         migrate(&mut value).unwrap();
 
-        assert_eq!(value, json!({ "version": 2, "uiLanguage": "es" }));
+        assert_eq!(
+            value,
+            json!({
+                "version": 3,
+                "uiLanguage": "es",
+                "spendingCap": { "dailyUsd": null, "monthlyUsd": null }
+            })
+        );
     }
 
     #[test]
@@ -663,8 +685,76 @@ mod tests {
 
         assert_eq!(settings.incoming.target_language, Language::English);
         assert_eq!(settings.outgoing.target_language, Language::Spanish);
-        assert_eq!(serde_json::to_value(&settings).unwrap(), file);
+        // Everything is kept; only the version and the (off) spending cap are new.
+        let mut expected = file;
+        expected["version"] = json!(3);
+        expected["spendingCap"] = json!({ "dailyUsd": null, "monthlyUsd": null });
+        assert_eq!(serde_json::to_value(&settings).unwrap(), expected);
         assert!(!backup_path(&path).exists());
+    }
+
+    #[test]
+    fn version_2_file_migrates_with_the_spending_cap_off() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(SETTINGS_FILE_NAME);
+        fs::write(
+            &path,
+            r#"{ "version": 2, "uiLanguage": "es", "incoming": { "originalVolume": 30 } }"#,
+        )
+        .unwrap();
+
+        let settings = load(&path);
+
+        assert_eq!(settings.version, SETTINGS_VERSION);
+        assert_eq!(settings.spending_cap, SpendingCapSettings::default());
+        assert_eq!(settings.ui_language, UiLanguage::Spanish);
+        assert_eq!(settings.incoming.original_volume, 30);
+        assert!(!backup_path(&path).exists());
+    }
+
+    #[test]
+    fn spending_cap_round_trips() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(SETTINGS_FILE_NAME);
+        let settings = Settings {
+            spending_cap: SpendingCapSettings {
+                daily_usd: Some(0.01),
+                monthly_usd: Some(25.5),
+            },
+            ..Settings::default()
+        };
+
+        save(&path, &settings).unwrap();
+
+        assert_eq!(load(&path).spending_cap, settings.spending_cap);
+    }
+
+    #[test]
+    fn validate_rejects_spending_caps_out_of_range() {
+        for bad in [
+            0.0,
+            -1.0,
+            f64::NAN,
+            f64::INFINITY,
+            MAX_SPENDING_CAP_USD + 1.0,
+        ] {
+            let mut settings = Settings::default();
+            settings.spending_cap.daily_usd = Some(bad);
+            assert!(
+                matches!(settings.validate(), Err(AppError::InvalidSettings(_))),
+                "daily {bad}"
+            );
+            let mut settings = Settings::default();
+            settings.spending_cap.monthly_usd = Some(bad);
+            assert!(
+                matches!(settings.validate(), Err(AppError::InvalidSettings(_))),
+                "monthly {bad}"
+            );
+        }
+        let mut settings = Settings::default();
+        settings.spending_cap.daily_usd = Some(0.01);
+        settings.spending_cap.monthly_usd = Some(MAX_SPENDING_CAP_USD);
+        assert!(settings.validate().is_ok());
     }
 
     #[test]

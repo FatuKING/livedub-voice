@@ -1,0 +1,28 @@
+.ld-cap-card__intro {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-muted);
+}
+
+.ld-cap-card__form,
+.ld-cap-card__openai {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.ld-cap-card__openai {
+  align-items: flex-start;
+  gap: var(--space-1);
+}
+
+.ld-cap-card__fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+  gap: var(--space-4);
+}
+
+.ld-cap-card__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}

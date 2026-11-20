@@ -234,6 +234,9 @@ export const es: Messages = {
     title: "Uso",
     description:
       "Minutos traducidos y costo estimado, por sesión y a lo largo del tiempo.",
+    estimate:
+      "Estimado en esta computadora a {price} por minuto de audio de cada dirección. No es tu factura de OpenAI: la real está en platform.openai.com.",
+    loadError: "No se pudo cargar el uso: {error}",
     emptyTitle: "Todavía no hay uso",
     emptyText:
       "Al empezar a traducir, aquí aparecen los minutos de cada dirección y su costo estimado. Se cuentan en esta computadora a {price} por minuto de audio; LiveDub Voice no lee tu facturación de OpenAI.",
@@ -241,6 +244,81 @@ export const es: Messages = {
       one: "{count} minuto",
       other: "{count} minutos",
     },
+    minutesShort: "{minutes} min",
+    session: {
+      eyebrow: "Esta sesión",
+      incoming: "Entrante · voces de los demás",
+      outgoing: "Saliente · tu voz",
+      live: "En vivo",
+      last: "Última sesión",
+      none: "Sin iniciar desde que se abrió LiveDub Voice.",
+      minutes: "Minutos",
+      cost: "Costo estimado",
+    },
+    totals: {
+      eyebrow: "Totales",
+      title: "Hoy y este mes",
+      today: "Hoy",
+      month: "Este mes",
+      incoming: "Entrante",
+      outgoing: "Saliente",
+      cost: "Costo estimado",
+    },
+    history: {
+      eyebrow: "Historial",
+      title: "Por día",
+      caption:
+        "Minutos y costo estimado por día, del más reciente al más antiguo",
+      day: "Día",
+      incoming: "Entrante",
+      outgoing: "Saliente",
+      cost: "Costo",
+    },
+    cap: {
+      eyebrow: "Presupuesto",
+      title: "Límite de gasto",
+      ariaLabel: "Límite de gasto",
+      intro:
+        "Detiene las traducciones cuando el costo estimado llega a un límite, y avisa al 80 %. Un campo vacío significa sin límite.",
+      daily: "Límite diario (USD)",
+      dailyHint: "Vuelve a cero a la medianoche, en tu hora local.",
+      monthly: "Límite mensual (USD)",
+      monthlyHint: "Vuelve a cero el día 1 de cada mes.",
+      placeholder: "Sin límite",
+      save: "Guardar límite",
+      saving: "Guardando…",
+      saved: "Límite de gasto guardado.",
+      invalid:
+        "Hace falta un monto entre 0,01 y 10.000 dólares, o dejar el campo vacío para no tener límite.",
+      loadError: "No se pudo cargar el límite de gasto: {error}",
+      saveError: "No se pudo guardar el límite de gasto: {error}",
+      openaiBudget: "Definir un presupuesto en tu cuenta de OpenAI",
+      openaiHint:
+        "Este límite solo cubre LiveDub Voice en esta computadora, y el costo es estimado. Un presupuesto en el panel de OpenAI es la protección real.",
+      openError: "No se pudo abrir el panel de OpenAI: {error}",
+    },
+  },
+
+  cap: {
+    period: {
+      daily: "diario",
+      monthly: "mensual",
+    },
+    warning:
+      "Ya se usó el {percent} de tu límite de gasto {period} ({spent} de {limit}).",
+    reached:
+      "Se alcanzó tu límite de gasto {period} ({spent} de {limit}). Las traducciones quedan apagadas hasta subir el límite o seguir por hoy.",
+    stopped:
+      "La traducción se detuvo: se alcanzó tu límite de gasto {period} ({spent} de {limit}).",
+    overridden:
+      "Por encima de tu límite de gasto {period} ({spent} de {limit}): se sigue traduciendo hasta la medianoche.",
+    startBlocked:
+      "Se alcanzó tu límite de gasto. ¿Seguir traduciendo por el resto del día?",
+    startBlockedLabel: "Límite de gasto alcanzado",
+    continueToday: "Seguir por hoy",
+    raise: "Subir el límite",
+    cancel: "Cancelar",
+    continueError: "No se pudo seguir por encima del límite: {error}",
   },
 
   errors: {
@@ -275,5 +353,7 @@ export const es: Messages = {
       "Un dispositivo elegido en Configuración no está conectado ({detail}).",
     source_app_not_running:
       "La app elegida en Configuración no está abierta ({detail}). Abrirla o traducir todo el sistema.",
+    spending_cap_reached:
+      "Se alcanzó tu límite de gasto ({detail}). Se puede subir en la pantalla Uso, o seguir por hoy.",
   },
 };

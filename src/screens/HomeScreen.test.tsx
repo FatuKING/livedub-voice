@@ -1,7 +1,7 @@
-import { act, screen } from "@testing-library/react";
+import { act, fireEvent, screen } from "@testing-library/react";
 import { invoke } from "@tauri-apps/api/core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { AudioDevice, Settings } from "../lib/api";
+import type { AudioDevice, Settings, UsageSnapshot } from "../lib/api";
 import { render } from "../test/i18n";
 import HomeScreen from "./HomeScreen";
 
@@ -42,6 +42,8 @@ interface Setup {
   outputDeviceId?: string | null;
   headphonesId?: string | null;
   devices?: AudioDevice[];
+  /** The usage snapshot; pending when omitted. */
+  usage?: UsageSnapshot;
 }
 
 function setup({
@@ -50,9 +52,10 @@ function setup({
   outputDeviceId = "cable",
   headphonesId = null,
   devices = [MIC, CABLE, SPEAKERS],
+  usage,
 }: Setup = {}) {
   const settings: Settings = {
-    version: 2,
+    version: 3,
     uiLanguage: "en",
     incoming: {
       enabled: false,
@@ -67,6 +70,7 @@ function setup({
       inputDeviceId: "mic",
       outputDeviceId,
     },
+    spendingCap: { dailyUsd: null, monthlyUsd: null },
   };
   const answers: Record<string, unknown> = {
     get_settings: settings,
@@ -81,12 +85,15 @@ function setup({
     get_outgoing_status: { state: "idle", error: null },
     get_incoming_status: { state: "idle", error: null },
   };
+  if (usage) answers.get_usage = usage;
   invokeMock.mockImplementation((command) =>
     command in answers
       ? Promise.resolve(answers[command])
       : new Promise(() => {}),
   );
-  render(<HomeScreen onOpenSettings={vi.fn()} />);
+  const onOpenUsage = vi.fn();
+  render(<HomeScreen onOpenSettings={vi.fn()} onOpenUsage={onOpenUsage} />);
+  return { onOpenUsage };
 }
 
 /** Waits until settings, devices and the key check are in. */
@@ -202,5 +209,61 @@ describe("HomeScreen incoming route", () => {
     await loaded();
 
     expect(startIncoming()).toBeEnabled();
+  });
+});
+
+describe("HomeScreen spending cap", () => {
+  function usageWith(cap: Partial<UsageSnapshot["cap"]>): UsageSnapshot {
+    const idle = { active: false, seconds: 0, costUsd: 0 };
+    const none = { incomingSeconds: 0, outgoingSeconds: 0, costUsd: 0 };
+    return {
+      pricePerMinuteUsd: 0.034,
+      session: { incoming: idle, outgoing: idle },
+      today: none,
+      month: none,
+      days: [],
+      cap: {
+        dailyUsd: 1,
+        monthlyUsd: null,
+        level: "ok",
+        period: "daily",
+        spentUsd: 0.1,
+        limitUsd: 1,
+        overriddenToday: false,
+        ...cap,
+      },
+    };
+  }
+
+  it("says nothing under 80 % of the cap", async () => {
+    setup({ usage: usageWith({}) });
+    await loaded();
+
+    expect(screen.queryByText(/spending cap/)).not.toBeInTheDocument();
+  });
+
+  it("warns at 80 %", async () => {
+    setup({ usage: usageWith({ level: "warning", spentUsd: 0.8 }) });
+
+    expect(
+      await screen.findByText(
+        "You have used 80% of your daily spending cap ($0.80 of $1.00).",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("explains a reached cap and links to raising it", async () => {
+    const { onOpenUsage } = setup({
+      usage: usageWith({ level: "reached", spentUsd: 1.01 }),
+    });
+
+    expect(
+      await screen.findByText(/You reached your daily spending cap/),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Raise the cap" }));
+    expect(onOpenUsage).toHaveBeenCalled();
+    expect(
+      screen.getByRole("button", { name: "Keep going today" }),
+    ).toBeInTheDocument();
   });
 });

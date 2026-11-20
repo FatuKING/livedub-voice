@@ -1,4 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
+import CapNotice from "../CapNotice";
 import Button from "../components/Button";
 import Card from "../components/Card";
 import LanguageRoute from "../components/LanguageRoute";
@@ -18,6 +19,7 @@ import {
 } from "../lib/api";
 import { languageName, type Direction } from "../lib/languages";
 import TranslationControls from "../TranslationControls";
+import { useUsage } from "../useUsage";
 import "./screens.css";
 
 /** Original-audio volume shown before the saved settings load (the core's default). */
@@ -110,11 +112,14 @@ function incomingBlocker(
 
 export interface HomeScreenProps {
   onOpenSettings: () => void;
+  /** Opens the Usage screen (spending cap). */
+  onOpenUsage?: () => void;
 }
 
 /** Overview of both translation routes, each with its controls. */
-function HomeScreen({ onOpenSettings }: HomeScreenProps) {
+function HomeScreen({ onOpenSettings, onOpenUsage }: HomeScreenProps) {
   const { t, format } = useI18n();
+  const { usage, stoppedBy, setUsage } = useUsage();
   const [settings, setSettings] = useState<Settings | null>(null);
   const [error, setError] = useState<Failure | null>(null);
   const [readiness, setReadiness] = useState<Readiness>({
@@ -176,6 +181,14 @@ function HomeScreen({ onOpenSettings }: HomeScreenProps) {
     <>
       <PageHeader title={t("home.title")} description={t("home.description")} />
       {error && <Notice tone="error">{failureText(error, t)}</Notice>}
+      {usage && (
+        <CapNotice
+          cap={usage.cap}
+          stopped={stoppedBy !== null}
+          onRaise={onOpenUsage}
+          onContinued={setUsage}
+        />
+      )}
       <div className="ld-route-grid ld-route-grid--stretch">
         <RouteCard
           direction="incoming"
@@ -199,6 +212,7 @@ function HomeScreen({ onOpenSettings }: HomeScreenProps) {
               volume: format.percent(originalVolume / 100),
             })}
             onOpenSettings={onOpenSettings}
+            onOpenUsage={onOpenUsage}
           />
         </RouteCard>
         <RouteCard
@@ -231,6 +245,7 @@ function HomeScreen({ onOpenSettings }: HomeScreenProps) {
             }
             help={t("home.outgoing.help")}
             onOpenSettings={onOpenSettings}
+            onOpenUsage={onOpenUsage}
           />
         </RouteCard>
       </div>
