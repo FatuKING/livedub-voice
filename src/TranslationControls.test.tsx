@@ -50,7 +50,7 @@ function renderControls(props: Partial<TranslationControlsProps> = {}) {
 }
 
 async function subscribed() {
-  await vi.waitFor(() => expect(handlers.size).toBe(3));
+  await vi.waitFor(() => expect(handlers.size).toBe(5));
 }
 
 beforeEach(() => {
@@ -320,8 +320,70 @@ describe("TranslationControls (outgoing)", () => {
 
     view.unmount();
 
-    await vi.waitFor(() => expect(unlisten).toHaveBeenCalledTimes(3));
+    await vi.waitFor(() => expect(unlisten).toHaveBeenCalledTimes(5));
     expect(invokeMock).not.toHaveBeenCalledWith("stop_outgoing");
+  });
+});
+
+describe("TranslationControls voice detection", () => {
+  it("shows whether someone speaks while live", async () => {
+    renderControls();
+    await subscribed();
+    // Nothing while off.
+    expect(screen.queryByText("Listening")).not.toBeInTheDocument();
+
+    emitStatus({ state: "live", error: null });
+    expect(await screen.findByText("Listening")).toBeInTheDocument();
+    expect(
+      screen.getByText("Nobody is speaking: no audio is sent to OpenAI."),
+    ).toBeInTheDocument();
+
+    emit("outgoing-voice", { speaking: true, sending: true });
+    expect(screen.getByText("Speaking")).toBeInTheDocument();
+    expect(
+      screen.getByText("Audio is being sent to OpenAI."),
+    ).toBeInTheDocument();
+
+    // The second after a phrase is still sent.
+    emit("outgoing-voice", { speaking: false, sending: true });
+    expect(screen.getByText("Listening")).toBeInTheDocument();
+    expect(
+      screen.getByText("Audio is being sent to OpenAI."),
+    ).toBeInTheDocument();
+
+    emitStatus({ state: "idle", error: null });
+    expect(screen.queryByText("Listening")).not.toBeInTheDocument();
+    expect(screen.queryByText("Speaking")).not.toBeInTheDocument();
+  });
+
+  it("explains an auto-off until the next start", async () => {
+    renderControls();
+    await subscribed();
+    emitStatus({ state: "live", error: null });
+
+    emit("outgoing-auto-off", { minutes: 5 });
+    emitStatus({ state: "stopping", error: null });
+    emitStatus({ state: "idle", error: null });
+    expect(
+      await screen.findByText(
+        "The outgoing translation turned itself off after 5 minutes without speech.",
+      ),
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Start outgoing" }));
+    expect(screen.queryByText(/turned itself off/)).not.toBeInTheDocument();
+  });
+
+  it("uses the singular for one minute", async () => {
+    renderControls({ direction: "incoming", help: "" });
+    await subscribed();
+
+    emit("incoming-auto-off", { minutes: 1 });
+    expect(
+      await screen.findByText(
+        "The incoming translation turned itself off after 1 minute without speech.",
+      ),
+    ).toBeInTheDocument();
   });
 });
 
@@ -376,9 +438,11 @@ describe("TranslationControls (incoming)", () => {
 
     expect(handlers.has("outgoing-status")).toBe(false);
     expect([...handlers.keys()].sort()).toEqual([
+      "incoming-auto-off",
       "incoming-level",
       "incoming-status",
       "incoming-transcript",
+      "incoming-voice",
     ]);
   });
 

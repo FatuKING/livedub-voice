@@ -115,7 +115,7 @@ describe("App", () => {
     invokeMock.mockImplementation((command) => {
       if (command === "get_settings") {
         return Promise.resolve({
-          version: 3,
+          version: 4,
           uiLanguage: "system",
           incoming: {
             enabled: false,
@@ -131,6 +131,9 @@ describe("App", () => {
             outputDeviceId: null,
           },
           spendingCap: { dailyUsd: null, monthlyUsd: null },
+          voiceActivity: { pauseWhenSilent: true, autoOffMinutes: 5 },
+          closeQuitsApp: false,
+          trayNoticeShown: false,
         });
       }
       return new Promise(() => {});

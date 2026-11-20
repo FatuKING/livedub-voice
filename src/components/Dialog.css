@@ -1,0 +1,49 @@
+/* The page behind a dialog: dimmed with the background color, no blur or glow. */
+.ld-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  place-items: center;
+  padding: var(--space-5);
+  background: color-mix(in srgb, var(--color-bg) 80%, transparent);
+}
+
+.ld-dialog {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  width: min(100%, 480px);
+  padding: var(--space-6);
+  background: var(--color-surface);
+  border: var(--border-hairline);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+}
+
+.ld-dialog__title {
+  margin: 0;
+  font-size: var(--font-size-xl);
+  font-weight: var(--font-weight-bold);
+}
+
+.ld-dialog__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.ld-dialog__body p {
+  margin: 0;
+}
+
+.ld-dialog__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+.ld-dialog__hint {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-muted);
+}

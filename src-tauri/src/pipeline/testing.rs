@@ -12,6 +12,7 @@ use tokio::sync::mpsc;
 
 use super::reconnect::ReconnectPolicy;
 use super::translation::{Direction, EventSink, InputSource, PipelineConfig, PipelineEvent};
+use super::voice::VoiceConfig;
 use super::{
     AudioIo, DuckGuard, InputSide, OutputSide, PipelineState, PipelineStatus, StreamGuard,
 };
@@ -113,7 +114,7 @@ pub(crate) struct DuckLog {
     pub(crate) restored_after_output: Option<bool>,
 }
 
-/// A "microphone" (or captured app) playing a 440 Hz tone and a "cable" (or headphones) that
+/// A "microphone" (or captured app) playing a 440 Hz tone (with a 20 ms breath every second) and a "cable" (or headphones) that
 /// records what it is sent. The app's tone follows its fake session volume, which the fake
 /// ducking lowers, like process loopback does.
 pub(crate) struct MemoryIo {
@@ -131,6 +132,9 @@ pub(crate) struct MemoryIo {
     pub(crate) app_volume: Arc<AtomicU32>,
     pub(crate) ducking: Arc<Mutex<DuckLog>>,
     pub(crate) streams: StreamCounters,
+    /// The input talks (plays the tone) for `.0`, then is silent for `.1`, over and over;
+    /// `None` = the tone never stops.
+    pub(crate) talk: Option<(Duration, Duration)>,
 }
 
 impl MemoryIo {
@@ -149,6 +153,7 @@ impl MemoryIo {
             app_volume: Arc::new(AtomicU32::new(1.0_f32.to_bits())),
             ducking: Arc::default(),
             streams: StreamCounters::default(),
+            talk: None,
         }
     }
 
@@ -176,6 +181,13 @@ impl MemoryIo {
         let mut phase = 0.0_f32;
         let step = 440.0 * std::f32::consts::TAU / format.sample_rate as f32;
         let mut buffer = Vec::new();
+        let talk = self.talk.map(|(on, off)| {
+            let frames = |duration: Duration| {
+                (duration.as_secs_f64() * f64::from(format.sample_rate)) as u64
+            };
+            (frames(on), frames(on) + frames(off))
+        });
+        let mut frame: u64 = 0;
         let stream = MemoryStream::spawn(
             format.sample_rate,
             self.streams.clone(),
@@ -185,7 +197,18 @@ impl MemoryIo {
                 let amplitude = 0.3 * f32::from_bits(volume.load(Ordering::Relaxed));
                 buffer.clear();
                 for _ in 0..frames {
-                    let sample = amplitude * phase.sin();
+                    // A short breath (20 ms of silence) every second, like speech has: the
+                    // voice detector learns a never-ending steady tone as background noise.
+                    let breath =
+                        frame % u64::from(format.sample_rate) < u64::from(format.sample_rate) / 50;
+                    let talking =
+                        !breath && talk.is_none_or(|(on, cycle)| frame % cycle.max(1) < on);
+                    frame += 1;
+                    let sample = if talking {
+                        amplitude * phase.sin()
+                    } else {
+                        0.0
+                    };
                     phase = (phase + step) % std::f32::consts::TAU;
                     buffer.extend(std::iter::repeat_n(sample, channels));
                 }
@@ -389,6 +412,7 @@ pub(crate) fn outgoing_config() -> PipelineConfig {
         target_language: Language::English,
         original_volume: None,
         reconnect: quick_reconnect(3),
+        voice: VoiceConfig::default(),
     }
 }
 
@@ -401,6 +425,7 @@ pub(crate) fn incoming_config_from(source: SourceApp) -> PipelineConfig {
         target_language: Language::Spanish,
         original_volume: Some(20),
         reconnect: quick_reconnect(3),
+        voice: VoiceConfig::default(),
     }
 }
 

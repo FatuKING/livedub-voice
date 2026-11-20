@@ -9,6 +9,7 @@ pub mod persist;
 pub mod pipeline;
 pub mod settings;
 pub mod translator;
+pub mod tray;
 pub mod usage;
 
 use std::sync::Arc;
@@ -73,6 +74,13 @@ pub fn run() {
             });
             app.manage(commands::DuckingJournal(journal));
 
+            // The tray icon: closing the window hides it there (see `tray`). Without it,
+            // closing quits as before.
+            app.manage(tray::Tray::default());
+            if let Err(error) = tray::create(app.handle()) {
+                tracing::warn!(%error, "could not create the tray icon; closing the window quits");
+            }
+
             // Ctrl+C in the console (`tauri dev`) closes the app like its window does, so the
             // translations shut down cleanly instead of the process being killed.
             let handle = app.handle().clone();
@@ -83,6 +91,13 @@ pub fn run() {
                 }
             });
             Ok(())
+        })
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event
+                && window.label() == tray::MAIN_WINDOW
+            {
+                on_close_requested(window, api);
+            }
         })
         .invoke_handler(tauri::generate_handler![
             commands::app_info,
@@ -103,7 +118,10 @@ pub fn run() {
             commands::stop_incoming,
             commands::get_incoming_status,
             commands::get_usage,
-            commands::override_spending_cap
+            commands::override_spending_cap,
+            commands::set_tray_labels,
+            commands::hide_to_tray,
+            commands::quit_app
         ])
         .build(tauri::generate_context!());
 
@@ -126,4 +144,36 @@ pub fn run() {
         }
         _ => {}
     });
+}
+
+/// The window's close button: quit, hide to the tray, or (the first time) keep it open while
+/// the panel explains the tray. See [`tray::close_action`].
+fn on_close_requested(window: &tauri::Window, api: &tauri::CloseRequestApi) {
+    use tauri::Emitter;
+
+    let app = window.app_handle();
+    let settings = match app.state::<settings::SettingsStore>().get() {
+        Ok(settings) => settings,
+        Err(error) => {
+            tracing::warn!(%error, "could not read the settings; closing quits");
+            return;
+        }
+    };
+    let has_tray = app.state::<tray::Tray>().exists();
+    match tray::close_action(&settings, has_tray) {
+        tray::CloseAction::Quit => tracing::info!("window closed: quitting"),
+        tray::CloseAction::HideToTray => {
+            api.prevent_close();
+            tracing::info!("window closed: hidden to the tray");
+            tray::hide_window(app);
+        }
+        tray::CloseAction::ExplainTray => {
+            api.prevent_close();
+            tracing::info!("window closed for the first time: explaining the tray");
+            if let Err(error) = app.emit(tray::CLOSE_TO_TRAY_NOTICE_EVENT, ()) {
+                tracing::warn!(%error, "could not ask the panel to explain the tray; hiding");
+                tray::hide_window(app);
+            }
+        }
+    }
 }

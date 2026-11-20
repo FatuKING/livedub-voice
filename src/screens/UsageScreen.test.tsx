@@ -31,7 +31,7 @@ const NO_CAP: CapStatus = {
 };
 
 const SETTINGS: Settings = {
-  version: 3,
+  version: 4,
   uiLanguage: "en",
   incoming: {
     enabled: false,
@@ -47,6 +47,9 @@ const SETTINGS: Settings = {
     outputDeviceId: "cable",
   },
   spendingCap: { dailyUsd: 2, monthlyUsd: null },
+  voiceActivity: { pauseWhenSilent: true, autoOffMinutes: 5 },
+  closeQuitsApp: false,
+  trayNoticeShown: false,
 };
 
 function snapshot(overrides: Partial<UsageSnapshot> = {}): UsageSnapshot {
@@ -274,6 +277,9 @@ describe("SpendingCapCard", () => {
       settings: {
         ...SETTINGS,
         spendingCap: { dailyUsd: null, monthlyUsd: 0.01 },
+        voiceActivity: { pauseWhenSilent: true, autoOffMinutes: 5 },
+        closeQuitsApp: false,
+        trayNoticeShown: false,
       },
     });
   });

@@ -42,6 +42,11 @@ export const es: Messages = {
           "Los auriculares elegidos en Configuración no están conectados. Hay que conectarlos o elegir otra salida.",
       },
       stopped: "La traducción entrante se detuvo: {error}",
+      autoOff: {
+        one: "La traducción entrante se apagó sola tras {count} minuto sin voz.",
+        other:
+          "La traducción entrante se apagó sola tras {count} minutos sin voz.",
+      },
       reconnecting:
         "Se perdió la conexión con OpenAI. Reconectando… Mientras tanto, el audio original suena con el volumen bajado y sin traducción.",
     },
@@ -64,6 +69,11 @@ export const es: Messages = {
           "La salida elegida en Configuración no está conectada. Hay que instalar o conectar el cable virtual, o elegir otra salida.",
       },
       stopped: "La traducción saliente se detuvo: {error}",
+      autoOff: {
+        one: "La traducción saliente se apagó sola tras {count} minuto sin voz.",
+        other:
+          "La traducción saliente se apagó sola tras {count} minutos sin voz.",
+      },
       reconnecting:
         "Se perdió la conexión con OpenAI. Reconectando… Mientras tanto, los demás no escuchan nada de tu voz.",
     },
@@ -85,6 +95,13 @@ export const es: Messages = {
     defaultMicrophone: "Micrófono predeterminado",
     notSet: "Sin elegir",
     openSettings: "Abrir configuración",
+    voice: {
+      label: "Voz",
+      speaking: "Hablando",
+      listening: "Escuchando",
+      pausedHint: "Nadie habla: no se envía audio a OpenAI.",
+      sendingHint: "Se está enviando audio a OpenAI.",
+    },
   },
 
   settings: {
@@ -151,6 +168,36 @@ export const es: Messages = {
         "No se encontró ningún cable virtual. Hace falta instalar uno, como VB-CABLE, y después actualizar los dispositivos.",
       appliesNextStart:
         "La traducción saliente está activa. Los cambios se aplican la próxima vez que se inicie.",
+    },
+    voice: {
+      eyebrow: "Ambas direcciones",
+      title: "Detección de voz",
+      ariaLabel: "Detección de voz",
+      pauseWhenSilent: "No enviar el silencio",
+      pauseWhenSilentHint:
+        "Solo la voz va a OpenAI, más un segundo después de cada frase para que se termine de traducir. El silencio que no se envía no cuenta en Uso. Conviene desactivarlo si se pierden las primeras palabras de las frases.",
+      autoOff: "Apagar cuando nadie habla",
+      autoOffHint:
+        "Detiene una dirección después de este tiempo sin voz, para que una traducción olvidada no siga activa.",
+      autoOffNever: "Nunca",
+      autoOffMinutes: {
+        one: "Tras {count} minuto",
+        other: "Tras {count} minutos",
+      },
+      appliesNextStart:
+        "Hay una traducción activa. Los cambios se aplican la próxima vez que se inicie.",
+    },
+    window: {
+      eyebrow: "Ventana",
+      title: "Al cerrar la ventana",
+      ariaLabel: "Al cerrar la ventana",
+      closeQuitsApp: "Cerrar la ventana sale de la app",
+      closeQuitsAppHint:
+        "Desactivado, cerrar la ventana oculta LiveDub Voice en la bandeja del sistema (junto al reloj) y las traducciones siguen activas.",
+      quit: "Salir de LiveDub Voice",
+      quitHint:
+        "Detiene ambas traducciones, devuelve el volumen a las apps y cierra la app.",
+      quitError: "No se pudo salir: {error}",
     },
   },
 
@@ -297,6 +344,31 @@ export const es: Messages = {
         "Este límite solo cubre LiveDub Voice en esta computadora, y el costo es estimado. Un presupuesto en el panel de OpenAI es la protección real.",
       openError: "No se pudo abrir el panel de OpenAI: {error}",
     },
+  },
+
+  tray: {
+    open: "Abrir LiveDub Voice",
+    quit: "Salir de LiveDub Voice",
+    incoming: "Entrante (los demás → tu idioma)",
+    outgoing: "Saliente (tu voz → los demás)",
+    states: {
+      idle: "Apagada",
+      connecting: "Conectando…",
+      live: "En vivo",
+      reconnecting: "Reconectando…",
+      stopping: "Terminando…",
+      error: "Error",
+    },
+  },
+
+  closeToTray: {
+    title: "LiveDub Voice sigue activo",
+    text: "Al cerrar la ventana, LiveDub Voice se oculta en la bandeja del sistema, junto al reloj, y las traducciones siguen activas. Un clic en el icono de la bandeja vuelve a abrirlo; con clic derecho se puede iniciar o detener una traducción, o salir.",
+    settingHint:
+      "Para salir al cerrar la ventana, activar “Cerrar la ventana sale de la app” en Configuración.",
+    hide: "Entendido, ocultar en la bandeja",
+    quit: "Salir de LiveDub Voice",
+    error: "No se pudo cerrar la ventana: {error}",
   },
 
   cap: {

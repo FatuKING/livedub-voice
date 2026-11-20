@@ -12,7 +12,7 @@ vi.mock("@tauri-apps/api/core", () => ({
 const invokeMock = vi.mocked(invoke);
 
 const defaults: Settings = {
-  version: 3,
+  version: 4,
   uiLanguage: "system",
   incoming: {
     enabled: false,
@@ -28,6 +28,9 @@ const defaults: Settings = {
     outputDeviceId: null,
   },
   spendingCap: { dailyUsd: null, monthlyUsd: null },
+  voiceActivity: { pauseWhenSilent: true, autoOffMinutes: 5 },
+  closeQuitsApp: false,
+  trayNoticeShown: false,
 };
 
 const speakers: AudioDevice = {
@@ -96,7 +99,9 @@ function mockCore(
       case "list_audio_apps":
         return Promise.resolve(apps);
       default:
-        return Promise.resolve((args as { settings: Settings }).settings);
+        return Promise.resolve(
+          (args as { settings?: Settings } | undefined)?.settings,
+        );
     }
   });
 }
@@ -201,7 +206,7 @@ describe("SettingsForm", () => {
     );
     expect(invokeMock).toHaveBeenCalledWith("save_settings", {
       settings: {
-        version: 3,
+        version: 4,
         // The form saves the language the panel is showing (English here).
         uiLanguage: "en",
         incoming: {
@@ -218,6 +223,9 @@ describe("SettingsForm", () => {
           outputDeviceId: "cable-input",
         },
         spendingCap: { dailyUsd: null, monthlyUsd: null },
+        voiceActivity: { pauseWhenSilent: true, autoOffMinutes: 5 },
+        closeQuitsApp: false,
+        trayNoticeShown: false,
       },
     });
   });
@@ -374,5 +382,70 @@ describe("SettingsForm", () => {
       "Could not list audio devices: Audio device error (could not list audio devices).",
     );
     expect(screen.getByLabelText("Headphones")).toHaveValue("");
+  });
+
+  it("saves the voice detection and window options", async () => {
+    mockCore(defaults, [speakers, cableInput, microphone]);
+    render(<SettingsForm />);
+
+    const pause = await screen.findByRole("switch", {
+      name: "Don't send silence",
+    });
+    expect(pause).toBeChecked();
+    const autoOff = screen.getByLabelText("Turn off when nobody speaks");
+    expect(autoOff).toHaveValue("5");
+    expect(optionLabels(autoOff)).toEqual([
+      "Never",
+      "After 1 minute",
+      "After 2 minutes",
+      "After 5 minutes",
+      "After 10 minutes",
+      "After 15 minutes",
+      "After 30 minutes",
+      "After 60 minutes",
+    ]);
+    const closeQuits = screen.getByRole("switch", {
+      name: "Closing the window quits the app",
+    });
+    expect(closeQuits).not.toBeChecked();
+
+    fireEvent.click(pause);
+    fireEvent.change(autoOff, { target: { value: "never" } });
+    fireEvent.click(closeQuits);
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await screen.findByText("Settings saved.");
+    const saved = savedSettings();
+    expect(saved.voiceActivity).toEqual({
+      pauseWhenSilent: false,
+      autoOffMinutes: null,
+    });
+    expect(saved.closeQuitsApp).toBe(true);
+  });
+
+  it("keeps an auto-off time that is not among the choices", async () => {
+    mockCore(
+      {
+        ...defaults,
+        voiceActivity: { pauseWhenSilent: true, autoOffMinutes: 7 },
+      },
+      [speakers],
+    );
+    render(<SettingsForm />);
+
+    const autoOff = await screen.findByLabelText("Turn off when nobody speaks");
+    expect(autoOff).toHaveValue("7");
+    expect(optionLabels(autoOff)).toContain("After 7 minutes");
+  });
+
+  it("quits the app from Settings", async () => {
+    mockCore(defaults, [speakers]);
+    render(<SettingsForm />);
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Quit LiveDub Voice" }),
+    );
+
+    expect(invokeMock).toHaveBeenCalledWith("quit_app");
   });
 });

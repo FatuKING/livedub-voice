@@ -6,12 +6,14 @@
 
 use super::reconnect::ReconnectPolicy;
 use super::translation::{Direction, InputSource, PipelineConfig};
+use super::voice::VoiceConfig;
 use crate::audio::{AudioDevice, DeviceKind};
 use crate::error::{AppError, AppResult};
-use crate::settings::OutgoingSettings;
+use crate::settings::{OutgoingSettings, VoiceActivitySettings};
 
-/// The outgoing pipeline's configuration from the saved settings.
-pub fn config(settings: &OutgoingSettings) -> PipelineConfig {
+/// The outgoing pipeline's configuration from the saved settings (its own, and the voice
+/// detection shared by both directions).
+pub fn config(settings: &OutgoingSettings, voice: &VoiceActivitySettings) -> PipelineConfig {
     PipelineConfig {
         direction: Direction::Outgoing,
         input: InputSource::Device(settings.input_device_id.clone()),
@@ -19,6 +21,7 @@ pub fn config(settings: &OutgoingSettings) -> PipelineConfig {
         target_language: settings.target_language,
         original_volume: None,
         reconnect: ReconnectPolicy::default(),
+        voice: VoiceConfig::from_settings(voice),
     }
 }
 
@@ -109,7 +112,13 @@ mod tests {
         };
 
         assert_eq!(
-            config(&settings),
+            config(
+                &settings,
+                &VoiceActivitySettings {
+                    pause_when_silent: true,
+                    auto_off_minutes: None,
+                }
+            ),
             PipelineConfig {
                 direction: Direction::Outgoing,
                 input: InputSource::Device(Some("mic".into())),
@@ -117,6 +126,7 @@ mod tests {
                 target_language: Language::Japanese,
                 original_volume: None,
                 reconnect: ReconnectPolicy::default(),
+                voice: VoiceConfig::default(),
             }
         );
     }

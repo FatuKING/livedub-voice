@@ -97,6 +97,14 @@ export interface SpendingCapSettings {
   monthlyUsd: number | null;
 }
 
+/** Local voice detection, for both directions. */
+export interface VoiceActivitySettings {
+  /** Stop sending audio to OpenAI while nobody speaks. On by default. */
+  pauseWhenSilent: boolean;
+  /** Stop a direction after this many minutes without speech (1–240); `null` = never. */
+  autoOffMinutes: number | null;
+}
+
 /**
  * User settings, as stored in `settings.json`.
  *
@@ -110,6 +118,11 @@ export interface Settings {
   incoming: IncomingSettings;
   outgoing: OutgoingSettings;
   spendingCap: SpendingCapSettings;
+  voiceActivity: VoiceActivitySettings;
+  /** Closing the window quits the app (off = it hides to the tray and keeps translating). */
+  closeQuitsApp: boolean;
+  /** The one-off tray notice was shown. Owned by the core: saving never turns it back off. */
+  trayNoticeShown: boolean;
 }
 
 /** Fetches the current settings from the core. */
@@ -311,6 +324,17 @@ export interface PipelineStatus {
 }
 
 /**
+ * The voice indicator of a running direction. Mirrors `VoiceActivity` in
+ * `src-tauri/src/pipeline/voice.rs`.
+ */
+export interface VoiceActivity {
+  /** Someone is speaking. */
+  speaking: boolean;
+  /** Audio is being sent to OpenAI (speech and the second after it, or everything when pausing is off). */
+  sending: boolean;
+}
+
+/**
  * Starts translating the microphone into the virtual cable with the saved `outgoing` settings.
  * Does nothing if it already runs.
  *
@@ -356,6 +380,24 @@ export function onOutgoingTranscript(
 ): Promise<UnlistenFn> {
   return listen<{ delta: string }>("outgoing-transcript", (event) =>
     handler(event.payload.delta),
+  );
+}
+
+/** Calls `handler` when the outgoing voice indicator changes. */
+export function onOutgoingVoice(
+  handler: (activity: VoiceActivity) => void,
+): Promise<UnlistenFn> {
+  return listen<VoiceActivity>("outgoing-voice", (event) =>
+    handler(event.payload),
+  );
+}
+
+/** Calls `handler` when the outgoing translation turns itself off after no speech. */
+export function onOutgoingAutoOff(
+  handler: (minutes: number) => void,
+): Promise<UnlistenFn> {
+  return listen<{ minutes: number }>("outgoing-auto-off", (event) =>
+    handler(event.payload.minutes),
   );
 }
 
@@ -418,6 +460,24 @@ export function onIncomingTranscript(
 ): Promise<UnlistenFn> {
   return listen<{ delta: string }>("incoming-transcript", (event) =>
     handler(event.payload.delta),
+  );
+}
+
+/** Calls `handler` when the incoming voice indicator changes. */
+export function onIncomingVoice(
+  handler: (activity: VoiceActivity) => void,
+): Promise<UnlistenFn> {
+  return listen<VoiceActivity>("incoming-voice", (event) =>
+    handler(event.payload),
+  );
+}
+
+/** Calls `handler` when the incoming translation turns itself off after no speech. */
+export function onIncomingAutoOff(
+  handler: (minutes: number) => void,
+): Promise<UnlistenFn> {
+  return listen<{ minutes: number }>("incoming-auto-off", (event) =>
+    handler(event.payload.minutes),
   );
 }
 
@@ -519,4 +579,36 @@ export function onSpendingCapReached(
   return listen<CapStatus>("spending-cap-reached", (event) =>
     handler(event.payload),
   );
+}
+
+/**
+ * The tray menu's strings, in the panel's language. Mirrors `TrayLabels` in
+ * `src-tauri/src/tray.rs`.
+ */
+export interface TrayLabels {
+  open: string;
+  quit: string;
+  incoming: string;
+  outgoing: string;
+  states: Record<PipelineState, string>;
+}
+
+/** Sends the tray menu's strings to the core (at startup and when the panel language changes). */
+export function setTrayLabels(labels: TrayLabels): Promise<void> {
+  return invoke<void>("set_tray_labels", { labels });
+}
+
+/** Hides the window to the tray (translations keep running) and remembers the notice was shown. */
+export function hideToTray(): Promise<void> {
+  return invoke<void>("hide_to_tray");
+}
+
+/** Quits LiveDub Voice: both translations stop gracefully and the app exits. */
+export function quitApp(): Promise<void> {
+  return invoke<void>("quit_app");
+}
+
+/** Calls `handler` the first time the window is closed, to explain that the app keeps running in the tray. */
+export function onCloseToTrayNotice(handler: () => void): Promise<UnlistenFn> {
+  return listen<null>("close-to-tray-notice", () => handler());
 }
