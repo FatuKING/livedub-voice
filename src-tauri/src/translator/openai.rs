@@ -200,4 +200,122 @@ mod tests {
         );
         assert_eq!(server.await.unwrap(), vec![CHUNK_SAMPLES, 1500]);
     }
+
+    /// Probes how the real endpoint treats a session that stops receiving audio (what the voice
+    /// detection relies on): speech, then no appends at all for a while (pings only), then
+    /// speech again. Prints a timeline of what the server sent. Spends a few cents.
+    ///
+    /// Run manually, with two speech WAVs (PCM16 mono 24 kHz):
+    /// `$env:LIVEDUB_PROBE_WAVS = "a.wav;b.wav"; cargo test -- --ignored --nocapture probe_idle`
+    /// (optional `LIVEDUB_PROBE_IDLE_S`, default 60). The key comes from `OPENAI_API_KEY` or the
+    /// one stored in Credential Manager.
+    #[tokio::test]
+    #[ignore = "needs an OpenAI key, network access and speech WAVs; spends a few cents"]
+    async fn probe_idle_session() {
+        use std::time::{Duration, Instant};
+
+        let key = match std::env::var("OPENAI_API_KEY") {
+            Ok(raw) => ApiKey::parse(&raw).unwrap(),
+            Err(_) => crate::credentials::Credentials::system()
+                .load()
+                .unwrap()
+                .unwrap(),
+        };
+        let wavs: Vec<Vec<i16>> = std::env::var("LIVEDUB_PROBE_WAVS")
+            .unwrap()
+            .split(';')
+            .map(|path| {
+                let mut reader = hound::WavReader::open(path).unwrap();
+                assert_eq!(reader.spec().sample_rate, 24_000);
+                reader.samples::<i16>().map(Result::unwrap).collect()
+            })
+            .collect();
+        let idle = Duration::from_secs(
+            std::env::var("LIVEDUB_PROBE_IDLE_S")
+                .ok()
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(60),
+        );
+
+        let mut session = OpenAiTranslator::new(key)
+            .start(Language::Spanish)
+            .await
+            .unwrap();
+        let input = session.input();
+        let started = Instant::now();
+        let at = move || started.elapsed().as_secs_f64();
+
+        // The feeder: each WAV followed by 1.5 s of silence, in real time, then nothing.
+        let feeder = {
+            let wavs = wavs.clone();
+            tokio::spawn(async move {
+                for (index, wav) in wavs.iter().enumerate() {
+                    if index > 0 {
+                        println!("{:7.2}s  -- no appends for {} s --", at(), idle.as_secs());
+                        tokio::time::sleep(idle).await;
+                    }
+                    println!("{:7.2}s  >> appending speech {index}", at());
+                    let mut audio = wav.clone();
+                    audio.extend(std::iter::repeat_n(0, 36_000));
+                    for chunk in audio.chunks(CHUNK_SAMPLES) {
+                        input.push(chunk);
+                        tokio::time::sleep(Duration::from_millis(200)).await;
+                    }
+                    println!("{:7.2}s  >> appending stopped", at());
+                }
+            })
+        };
+
+        let total = Duration::from_secs_f64(
+            wavs.iter()
+                .map(|wav| wav.len() as f64 / 24_000.0 + 1.5)
+                .sum::<f64>(),
+        ) + idle * (wavs.len() as u32 - 1)
+            + Duration::from_secs(12);
+        let deadline = tokio::time::Instant::now() + total;
+        let mut audible = 0;
+        let mut silent = 0;
+        loop {
+            let output = tokio::select! {
+                output = session.next_output() => output,
+                () = tokio::time::sleep_until(deadline) => break,
+            };
+            match output {
+                Some(TranslatorOutput::Audio(delta)) => {
+                    let loud = !crate::translator::jitter::is_digital_silence(&delta.samples);
+                    if loud {
+                        audible += 1;
+                    } else {
+                        silent += 1;
+                    }
+                    println!(
+                        "{:7.2}s  delta {} ms {}",
+                        at(),
+                        delta.samples.len() / 24,
+                        if loud { "audible" } else { "silent" }
+                    );
+                }
+                Some(TranslatorOutput::OutputTranscriptDelta(text)) => {
+                    println!("{:7.2}s  caption {text:?}", at());
+                }
+                Some(TranslatorOutput::InputTranscriptDelta(text)) => {
+                    println!("{:7.2}s  source {text:?}", at());
+                }
+                Some(TranslatorOutput::Error { code, message }) => {
+                    println!("{:7.2}s  ERROR {code}: {message}", at());
+                }
+                Some(TranslatorOutput::Closed) | None => {
+                    println!("{:7.2}s  CLOSED by the server", at());
+                    break;
+                }
+            }
+        }
+        feeder.await.unwrap();
+        println!(
+            "{:7.2}s  closing ({audible} audible, {silent} silent deltas)",
+            at()
+        );
+        let rest = session.finish().await;
+        println!("{:7.2}s  closed, {} more outputs", at(), rest.len());
+    }
 }

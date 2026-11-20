@@ -1,6 +1,7 @@
 import { ChartColumn, House, Settings, type LucideIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import "./App.css";
+import CloseToTrayDialog from "./CloseToTrayDialog";
 import LogoMark from "./components/LogoMark";
 import { useT } from "./i18n/context";
 import { failureText, type Failure } from "./i18n/errors";
@@ -9,6 +10,7 @@ import { getAppInfo, type AppInfo } from "./lib/api";
 import HomeScreen from "./screens/HomeScreen";
 import SettingsScreen from "./screens/SettingsScreen";
 import UsageScreen from "./screens/UsageScreen";
+import { useTrayLabels } from "./useTrayLabels";
 
 export type Screen = "home" | "settings" | "usage";
 
@@ -25,6 +27,7 @@ function App() {
   const [screen, setScreen] = useState<Screen>("home");
   const contentRef = useRef<HTMLElement>(null);
   const navigated = useRef(false);
+  useTrayLabels();
 
   useEffect(() => {
     getAppInfo()
@@ -91,6 +94,7 @@ function App() {
           {screen === "usage" && <UsageScreen />}
         </div>
       </main>
+      <CloseToTrayDialog />
     </div>
   );
 }

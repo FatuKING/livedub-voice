@@ -1,4 +1,4 @@
-import { RefreshCw, Save } from "lucide-react";
+import { LogOut, RefreshCw, Save } from "lucide-react";
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import Button from "./components/Button";
 import Card from "./components/Card";
@@ -13,6 +13,7 @@ import { failureText, type Failure } from "./i18n/errors";
 import {
   getSettings,
   listAudioDevices,
+  quitApp,
   saveSettings,
   type AudioDevice,
   type Settings,
@@ -29,8 +30,15 @@ import { languageOptions, type Direction } from "./lib/languages";
 import { PIPELINES, isActive } from "./lib/pipelines";
 import "./SettingsForm.css";
 
+/** Auto-off times offered (minutes); a saved value outside the list is added to it. */
+const AUTO_OFF_CHOICES = [1, 2, 5, 10, 15, 30, 60];
+
+/** The auto-off select's value for "never". */
+const NEVER = "never";
+
 /**
- * Settings form: languages, ducking, enabled toggles, devices and source app, grouped per direction.
+ * Settings form: languages, ducking, enabled toggles, devices and source app, grouped per
+ * direction; then voice detection and what closing the window does, for the whole app.
  *
  * Devices are picked from the list the core reports (refreshable); the incoming source is the
  * whole system or one of the apps playing audio (see `SourceAppPicker`).
@@ -44,6 +52,7 @@ function SettingsForm() {
   const [devices, setDevices] = useState<AudioDevice[] | null>(null);
   const [devicesError, setDevicesError] = useState<Failure | null>(null);
   const [loadingDevices, setLoadingDevices] = useState(false);
+  const [quitError, setQuitError] = useState<Failure | null>(null);
   const [active, setActive] = useState<Record<Direction, boolean>>({
     incoming: false,
     outgoing: false,
@@ -108,7 +117,7 @@ function SettingsForm() {
     );
   }
 
-  const { incoming, outgoing } = settings;
+  const { incoming, outgoing, voiceActivity } = settings;
 
   function updateIncoming(patch: Partial<Settings["incoming"]>) {
     setSaved(false);
@@ -127,6 +136,46 @@ function SettingsForm() {
         : current,
     );
   }
+
+  function updateVoice(patch: Partial<Settings["voiceActivity"]>) {
+    setSaved(false);
+    setSettings((current) =>
+      current
+        ? {
+            ...current,
+            voiceActivity: { ...current.voiceActivity, ...patch },
+          }
+        : current,
+    );
+  }
+
+  function updateCloseQuitsApp(closeQuitsApp: boolean) {
+    setSaved(false);
+    setSettings((current) =>
+      current ? { ...current, closeQuitsApp } : current,
+    );
+  }
+
+  function quit() {
+    setQuitError(null);
+    quitApp().catch((reason: unknown) =>
+      setQuitError({ key: "settings.window.quitError", reason }),
+    );
+  }
+
+  const autoOffChoices = [...AUTO_OFF_CHOICES];
+  const savedAutoOff = voiceActivity.autoOffMinutes;
+  if (savedAutoOff !== null && !autoOffChoices.includes(savedAutoOff)) {
+    autoOffChoices.push(savedAutoOff);
+    autoOffChoices.sort((a, b) => a - b);
+  }
+  const autoOffOptions = [
+    { value: NEVER, label: t("settings.voice.autoOffNever") },
+    ...autoOffChoices.map((minutes) => ({
+      value: String(minutes),
+      label: t("settings.voice.autoOffMinutes", { count: minutes }),
+    })),
+  ];
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -278,6 +327,62 @@ function SettingsForm() {
             inputId={outgoing.inputDeviceId}
             outputId={incoming.outputDeviceId}
           />
+        </Card>
+      </div>
+
+      <div className="ld-route-grid">
+        <Card
+          eyebrow={t("settings.voice.eyebrow")}
+          title={t("settings.voice.title")}
+          aria-label={t("settings.voice.ariaLabel")}
+        >
+          {(active.incoming || active.outgoing) && (
+            <Notice tone="info">{t("settings.voice.appliesNextStart")}</Notice>
+          )}
+          <Toggle
+            label={t("settings.voice.pauseWhenSilent")}
+            hint={t("settings.voice.pauseWhenSilentHint")}
+            checked={voiceActivity.pauseWhenSilent}
+            onChange={(pauseWhenSilent) => updateVoice({ pauseWhenSilent })}
+          />
+          <Select
+            label={t("settings.voice.autoOff")}
+            hint={t("settings.voice.autoOffHint")}
+            value={savedAutoOff === null ? NEVER : String(savedAutoOff)}
+            options={autoOffOptions}
+            onChange={(value) =>
+              updateVoice({
+                autoOffMinutes: value === NEVER ? null : Number(value),
+              })
+            }
+          />
+        </Card>
+
+        <Card
+          eyebrow={t("settings.window.eyebrow")}
+          title={t("settings.window.title")}
+          aria-label={t("settings.window.ariaLabel")}
+        >
+          <Toggle
+            label={t("settings.window.closeQuitsApp")}
+            hint={t("settings.window.closeQuitsAppHint")}
+            checked={settings.closeQuitsApp}
+            onChange={updateCloseQuitsApp}
+          />
+          <Perforation />
+          <div className="ld-settings__quit">
+            <Button
+              variant="secondary"
+              icon={<LogOut size={16} aria-hidden="true" />}
+              onClick={quit}
+            >
+              {t("settings.window.quit")}
+            </Button>
+            <p className="ld-settings__hint">{t("settings.window.quitHint")}</p>
+            {quitError && (
+              <Notice tone="error">{failureText(quitError, t)}</Notice>
+            )}
+          </div>
         </Card>
       </div>
 

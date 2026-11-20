@@ -55,7 +55,7 @@ function setup({
   usage,
 }: Setup = {}) {
   const settings: Settings = {
-    version: 3,
+    version: 4,
     uiLanguage: "en",
     incoming: {
       enabled: false,
@@ -71,6 +71,9 @@ function setup({
       outputDeviceId,
     },
     spendingCap: { dailyUsd: null, monthlyUsd: null },
+    voiceActivity: { pauseWhenSilent: true, autoOffMinutes: 5 },
+    closeQuitsApp: false,
+    trayNoticeShown: false,
   };
   const answers: Record<string, unknown> = {
     get_settings: settings,

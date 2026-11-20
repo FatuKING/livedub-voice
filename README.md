@@ -29,7 +29,9 @@ Translation is done by OpenAI's `gpt-realtime-translate` model, using your own A
 - Works with any virtual audio cable for the outgoing microphone.
 - Adjustable volume of the original audio (ducking).
 - Live captions of the translations.
-- Usage panel: minutes translated and estimated cost, per session and historical.
+- Usage panel: minutes translated and estimated cost, per session and historical, with an optional spending cap.
+- Voice detection: silence is not sent to OpenAI, and a direction that hears nobody for a while (5 minutes by default) turns itself off.
+- Runs in the system tray like Discord: closing the window keeps the translations going, and the tray menu starts, stops or quits them.
 - Your API key is stored in Windows Credential Manager, never in plain text.
 - No telemetry: audio goes only to OpenAI. No game process injection, so it is safe with anti-cheat systems.
 
@@ -41,7 +43,7 @@ Translation is done by OpenAI's `gpt-realtime-translate` model, using your own A
 
 ### Cost
 
-You pay OpenAI directly for what you use. `gpt-realtime-translate` costs **$0.034 per audio minute, per direction**. With both directions active that is roughly **$4 per hour**. LiveDub Voice estimates your usage locally in the usage panel.
+You pay OpenAI directly for what you use. `gpt-realtime-translate` costs **$0.034 per audio minute, per direction**. With both directions active and audio streaming all the time that is roughly **$4 per hour**. By default LiveDub Voice only sends audio while someone speaks (plus about a second after each phrase), so a quiet call or game costs much less. It estimates your usage locally in the usage panel; the real bill is on platform.openai.com.
 
 ## Installation
 

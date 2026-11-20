@@ -1,6 +1,10 @@
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import {
   getIncomingStatus,
+  onIncomingAutoOff,
+  onIncomingVoice,
+  onOutgoingAutoOff,
+  onOutgoingVoice,
   getOutgoingStatus,
   onIncomingLevel,
   onIncomingStatus,
@@ -14,6 +18,7 @@ import {
   stopOutgoing,
   type InputLevel,
   type PipelineStatus,
+  type VoiceActivity,
 } from "./api";
 import type { Direction } from "./languages";
 import type { PipelineState } from "./api";
@@ -36,6 +41,9 @@ export interface PipelineApi {
   onStatus: (handler: (status: PipelineStatus) => void) => Promise<UnlistenFn>;
   onLevel: (handler: (level: InputLevel) => void) => Promise<UnlistenFn>;
   onTranscript: (handler: (delta: string) => void) => Promise<UnlistenFn>;
+  onVoice: (handler: (activity: VoiceActivity) => void) => Promise<UnlistenFn>;
+  /** The direction turned itself off after `minutes` without speech. */
+  onAutoOff: (handler: (minutes: number) => void) => Promise<UnlistenFn>;
 }
 
 /** Each direction's pipeline API. */
@@ -47,6 +55,8 @@ export const PIPELINES: Record<Direction, PipelineApi> = {
     onStatus: onIncomingStatus,
     onLevel: onIncomingLevel,
     onTranscript: onIncomingTranscript,
+    onVoice: onIncomingVoice,
+    onAutoOff: onIncomingAutoOff,
   },
   outgoing: {
     start: startOutgoing,
@@ -55,5 +65,7 @@ export const PIPELINES: Record<Direction, PipelineApi> = {
     onStatus: onOutgoingStatus,
     onLevel: onOutgoingLevel,
     onTranscript: onOutgoingTranscript,
+    onVoice: onOutgoingVoice,
+    onAutoOff: onOutgoingAutoOff,
   },
 };

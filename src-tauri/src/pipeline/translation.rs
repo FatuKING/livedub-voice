@@ -7,7 +7,8 @@
 //!   ducked (see [`crate::audio::ducking`]).
 //!
 //! ```text
-//! input (device format) -> [ducking compensation] -> ToTranslator (PCM16 mono 24 kHz) -> LiveSession
+//! input (device format) -> [ducking compensation] -> ToTranslator (PCM16 mono 24 kHz)
+//!   -> VoiceGate (only speech, its pre-roll and trailing silence) -> LiveSession
 //! LiveSession outputs: audio -> JitterBuffer, translated text -> TranscriptDelta events
 //! JitterBuffer -> FromTranslator (output format) -> playback queue -> cable / headphones
 //! ```
@@ -20,6 +21,14 @@
 //!   audio sent;
 //! - the **supervisor** task reads the translator's outputs into the jitter buffer, forwards the
 //!   captions and watches both devices.
+//!
+//! # Voice detection
+//!
+//! The pump runs the input through a [`VoiceGate`] (see [`super::voice`]): while nobody speaks
+//! nothing is appended to the session (with `pause_when_silent`), so silence is not billed; the
+//! session stays open and resumes with a short pre-roll when someone speaks. The gate's changes
+//! are reported (`Voice`, for the panel's indicator), and after the configured time without
+//! voice it reports `NoSpeech` once: the owner then stops the pipeline (auto-off).
 //!
 //! # Ducking (incoming)
 //!
@@ -36,7 +45,8 @@
 //!
 //! A stop requested by the user is graceful, so the end of the last sentence is not lost: the
 //! state becomes `stopping`, the input is replaced by [`TRAILING_SILENCE`] of silence (the model
-//! needs it to finish the sentence), then `session.close` is sent and the outputs are read until
+//! needs it to finish the sentence; skipped when the voice gate had already paused, since the
+//! model already got its silence), then `session.close` is sent and the outputs are read until
 //! `session.closed`, and finally the jitter buffer plays its tail into the output. After the close
 //! the server flushes the translated tail and then seconds of digital silence; once
 //! [`TAIL_SILENCE_DONE`] of it has arrived the translation is over and the pipeline stops waiting
@@ -86,6 +96,7 @@ use tokio::task::JoinHandle;
 use super::latency::{LatencyEvent, LatencyReport, LatencyTracker, SPEECH_RMS};
 use super::reconnect::{ReconnectError, ReconnectPolicy, reconnect};
 use super::recorder::{InputHealth, SessionRecorder};
+use super::voice::{VoiceActivity, VoiceConfig, VoiceGate};
 use super::{AudioIo, DuckGuard, InputSide, OutputSide, PipelineStatus, StreamGuard};
 use crate::audio::LoopbackTarget;
 use crate::audio::ducking::SharedGain;
@@ -178,8 +189,15 @@ pub enum PipelineEvent {
     /// Translated text (append-only delta), in the target language.
     TranscriptDelta(String),
     /// Seconds of input audio sent to the translator since start, every second and once more
-    /// when the pipeline stops.
+    /// when the pipeline stops. With the voice gate, silence that is not appended is not
+    /// counted.
     AudioSent { seconds: f64 },
+    /// The voice indicator changed (whether someone speaks, whether audio is being appended).
+    /// Reset to the default when the pipeline stops.
+    Voice(VoiceActivity),
+    /// Nobody spoke for the configured auto-off time (reported once). The pipeline keeps
+    /// running: its owner decides to stop it.
+    NoSpeech { after: Duration },
 }
 
 /// Receives the pipeline's events, from the pipeline's threads.
@@ -208,6 +226,8 @@ pub struct PipelineConfig {
     pub original_volume: Option<u8>,
     /// How a dropped session is reconnected.
     pub reconnect: ReconnectPolicy,
+    /// Voice detection: pausing the appends while nobody speaks, and auto-off.
+    pub voice: VoiceConfig,
 }
 
 /// How a pipeline was asked to stop.
@@ -535,6 +555,8 @@ impl TranslationPipeline {
 
         events(PipelineEvent::Status(PipelineStatus::live()));
         let pump = Pump::spawn(PumpParts {
+            gate: VoiceGate::new(config.voice),
+            auto_off: config.voice.auto_off,
             input: consumer,
             gain,
             to_translator,
@@ -1009,6 +1031,7 @@ impl Supervisor {
         let direction = shared.direction.name();
 
         events(PipelineEvent::Level(InputLevel::default()));
+        events(PipelineEvent::Voice(VoiceActivity::default()));
         match failure {
             None => {
                 tracing::info!(direction, "translation stopped");
@@ -1112,6 +1135,10 @@ async fn next_output(session: &mut Option<LiveSession>) -> Option<TranslatorOutp
 
 /// What the pump thread owns.
 struct PumpParts {
+    /// Decides what is appended (see the module docs).
+    gate: VoiceGate,
+    /// For the `NoSpeech` report.
+    auto_off: Option<Duration>,
     input: AudioConsumer,
     /// Ducking compensation for the captured audio (incoming), see the module docs.
     gain: Option<SharedGain>,
@@ -1168,6 +1195,7 @@ fn run_pump(mut parts: PumpParts) {
     let channels = parts.input.channels();
     let mut captured = vec![0.0_f32; 1024 * channels];
     let mut pcm: Vec<i16> = Vec::with_capacity(samples_for_ms(100));
+    let mut gated: Vec<i16> = Vec::with_capacity(samples_for_ms(500));
     let mut translated = vec![0_i16; OUTPUT_CHUNK_SAMPLES];
     let mut device: Vec<f32> = Vec::with_capacity(
         parts.output_format.frames_for_ms(20) * usize::from(parts.output_format.channels),
@@ -1199,19 +1227,47 @@ fn run_pump(mut parts: PumpParts) {
             parts.to_translator.process(&captured[..read], &mut pcm);
         }
         if !pcm.is_empty() && !shared.input_done.load(Ordering::Relaxed) {
-            if trailing {
+            if trailing && trailing_sent == 0 && parts.gate.is_paused() {
+                // The user stopped while nobody spoke: the model already got its silence.
+                shared.record_event(json!({ "kind": "trailing_skipped" }));
+                shared.input_done.store(true, Ordering::Relaxed);
+                pcm.clear();
+            } else if trailing {
                 // The user stopped: silence, paced by the input's clock, so the model
                 // finishes the last sentence.
                 let take = (trailing_samples - trailing_sent).min(pcm.len() as u64) as usize;
                 pcm.truncate(take);
                 pcm.fill(0);
                 trailing_sent += take as u64;
+            } else {
+                lock(&shared.health).sent(&pcm, rms(&pcm) >= SPEECH_RMS);
+                gated.clear();
+                let report = parts.gate.process(&pcm, &mut gated);
+                std::mem::swap(&mut pcm, &mut gated);
+                if let Some(activity) = report.activity {
+                    shared.record_event(json!({
+                        "kind": "voice",
+                        "speaking": activity.speaking,
+                        "sending": activity.sending,
+                    }));
+                    (parts.events)(PipelineEvent::Voice(activity));
+                }
+                if report.auto_off
+                    && let Some(after) = parts.auto_off
+                {
+                    tracing::info!(
+                        direction = shared.direction.name(),
+                        minutes = after.as_secs() / 60,
+                        "no speech for the auto-off time"
+                    );
+                    shared.record_event(json!({ "kind": "no_speech", "after_s": after.as_secs() }));
+                    (parts.events)(PipelineEvent::NoSpeech { after });
+                }
             }
+        }
+        if !pcm.is_empty() && !shared.input_done.load(Ordering::Relaxed) {
             let block_rms = rms(&pcm);
             let at = shared.elapsed();
-            if !trailing {
-                lock(&shared.health).sent(&pcm, block_rms >= SPEECH_RMS);
-            }
             // While reconnecting there is no session: the audio is discarded.
             let pushed = lock(&shared.session_input)
                 .as_ref()
@@ -2145,6 +2201,165 @@ mod tests {
         );
     }
 
+    /// The last `AudioSent` report.
+    fn sent_seconds(events: &[PipelineEvent]) -> f64 {
+        events
+            .iter()
+            .rev()
+            .find_map(|event| match event {
+                PipelineEvent::AudioSent { seconds } => Some(*seconds),
+                _ => None,
+            })
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn silence_is_not_appended_nor_billed() {
+        // Half a second of talk, then 4.5 s of silence.
+        let io = Arc::new(MemoryIo {
+            talk: Some((Duration::from_millis(500), Duration::from_millis(4500))),
+            ..MemoryIo::new()
+        });
+        let (events, recorded) = recorder();
+        let meter = Arc::new(crate::usage::UsageMeter::new(
+            None,
+            Arc::new(crate::usage::SystemClock),
+            crate::settings::SpendingCapSettings::default(),
+        ));
+        let events = crate::usage::metered_sink(
+            Arc::clone(&meter),
+            Direction::Outgoing,
+            events,
+            Arc::new(|_| {}),
+        );
+        let translator = Arc::new(FakeTranslator::echo(Duration::from_millis(100)));
+
+        let pipeline =
+            TranslationPipeline::start(outgoing_config(), translator, io.clone(), events)
+                .await
+                .unwrap();
+        tokio::time::sleep(Duration::from_millis(3500)).await;
+        let stop_started = Instant::now();
+        pipeline.stop().await;
+        let stop_took = stop_started.elapsed();
+
+        let events = recorded.lock().unwrap();
+        // The talk, plus ~1.2 s of trailing silence (to a 200 ms chunk), out of 3.5 s live;
+        // no trailing silence at the stop, as appending had already paused.
+        let sent = sent_seconds(&events);
+        assert!((1.5..2.2).contains(&sent), "{sent} s appended");
+        // The meter counts exactly what was appended.
+        let metered = meter.snapshot().session.outgoing.seconds;
+        assert!(
+            (metered - sent).abs() < 0.01,
+            "{metered} s metered, {sent} s sent"
+        );
+        assert!(
+            stop_took < Duration::from_millis(1500),
+            "stop took {stop_took:?}"
+        );
+        // The talk was translated (echoed) whole.
+        let loud = io.loud_played_samples();
+        assert!(loud > 44_100 * 2 * 3 / 10, "{loud} loud samples played");
+
+        let voice: Vec<VoiceActivity> = events
+            .iter()
+            .filter_map(|event| match event {
+                PipelineEvent::Voice(activity) => Some(*activity),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            voice,
+            [
+                VoiceActivity {
+                    speaking: true,
+                    sending: true
+                },
+                VoiceActivity {
+                    speaking: false,
+                    sending: true
+                },
+                VoiceActivity {
+                    speaking: false,
+                    sending: false
+                },
+                // Reset when the pipeline stops.
+                VoiceActivity::default(),
+            ]
+        );
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event, PipelineEvent::NoSpeech { .. }))
+        );
+    }
+
+    #[tokio::test]
+    async fn without_pausing_silence_is_appended_as_before() {
+        let io = Arc::new(MemoryIo {
+            talk: Some((Duration::from_millis(500), Duration::from_millis(4500))),
+            ..MemoryIo::new()
+        });
+        let (events, recorded) = recorder();
+        let config = PipelineConfig {
+            voice: VoiceConfig {
+                pause_when_silent: false,
+                auto_off: None,
+            },
+            ..outgoing_config()
+        };
+        let translator = Arc::new(FakeTranslator::echo(Duration::from_millis(100)));
+
+        let pipeline = TranslationPipeline::start(config, translator, io.clone(), events)
+            .await
+            .unwrap();
+        tokio::time::sleep(Duration::from_millis(2000)).await;
+        pipeline.stop().await;
+
+        // 2 s live plus 1.5 s of trailing silence.
+        let sent = sent_seconds(&recorded.lock().unwrap());
+        assert!((3.2..3.9).contains(&sent), "{sent} s appended");
+    }
+
+    #[tokio::test]
+    async fn reports_no_speech_after_the_auto_off_time() {
+        // Nobody ever speaks.
+        let io = Arc::new(MemoryIo {
+            talk: Some((Duration::ZERO, Duration::from_secs(1))),
+            ..MemoryIo::new()
+        });
+        let (events, recorded) = recorder();
+        let config = PipelineConfig {
+            voice: VoiceConfig {
+                pause_when_silent: true,
+                auto_off: Some(Duration::from_millis(800)),
+            },
+            ..outgoing_config()
+        };
+        let translator = Arc::new(FakeTranslator::echo(Duration::from_millis(100)));
+
+        let pipeline = TranslationPipeline::start(config, translator, io.clone(), events)
+            .await
+            .unwrap();
+        tokio::time::sleep(Duration::from_millis(1500)).await;
+        // The pipeline only reports it: stopping is its owner's call.
+        assert!(!pipeline.is_finished());
+        pipeline.stop().await;
+
+        let events = recorded.lock().unwrap();
+        let reports: Vec<Duration> = events
+            .iter()
+            .filter_map(|event| match event {
+                PipelineEvent::NoSpeech { after } => Some(*after),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(reports, [Duration::from_millis(800)]);
+        // Nothing was ever appended.
+        assert_eq!(sent_seconds(&events), 0.0);
+    }
+
     #[test]
     fn ducking_compensation_scales_samples_and_level() {
         let mut samples = [0.06, -0.03, 0.0];
@@ -2392,6 +2607,7 @@ mod tests {
                 target_language: Language::English,
                 original_volume: None,
                 reconnect: ReconnectPolicy::default(),
+                voice: VoiceConfig::default(),
             },
             Arc::new(FakeTranslator::echo(Duration::from_millis(300))),
             Arc::new(WasapiIo::default()),
@@ -2507,6 +2723,7 @@ mod tests {
                 target_language: Language::Spanish,
                 original_volume: Some(20),
                 reconnect: ReconnectPolicy::default(),
+                voice: VoiceConfig::default(),
             },
             Arc::new(FakeTranslator::echo(Duration::from_millis(300))),
             Arc::new(WasapiIo::with_ducking_journal(journal.clone())),

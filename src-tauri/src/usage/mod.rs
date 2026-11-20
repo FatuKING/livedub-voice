@@ -4,14 +4,15 @@
 //!
 //! # What counts as a billed minute
 //!
-//! `gpt-realtime-translate` is billed by audio duration ($0.034 per minute, see
-//! [`PRICE_PER_MINUTE_USD`]); OpenAI documents no rounding. The pipelines stream input audio to
-//! the session continuously while it is open (silence included, plus ~1.5 s of trailing silence
-//! when stopping), so the audio streamed equals the wall-clock time the session is open and
-//! streaming. The meter counts exactly that: the seconds of PCM appended to the session, as the
-//! pipeline reports them (`PipelineEvent::AudioSent`, every second and once more when it stops).
-//! While a dropped session reconnects nothing is appended, so reconnect gaps are not counted.
-//! It is an estimate: the real bill is on platform.openai.com.
+//! `gpt-realtime-translate` costs $0.034 per minute (see [`PRICE_PER_MINUTE_USD`]); OpenAI
+//! documents no rounding and does not say what the minute measures. Model time follows the audio
+//! appended (a pause in appending does not exist for the model), so the app takes the billed
+//! minute to be audio appended. The meter counts exactly that: the seconds of PCM appended to
+//! the session, as the pipeline reports them (`PipelineEvent::AudioSent`, every second and once
+//! more when it stops). With voice detection (see [`crate::pipeline::voice`]) that is speech,
+//! its pre-roll and the ~1.2 s after each phrase; silence that is not appended is not counted,
+//! and neither are reconnect gaps. With pausing off it equals the time the session is open and
+//! streaming. It is an estimate: the real bill is on platform.openai.com.
 //!
 //! # History
 //!

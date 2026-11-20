@@ -1,7 +1,7 @@
 //! User settings.
 //!
 //! The settings (panel language, language direction, devices, source app, ducking volume,
-//! spending cap) are stored as a JSON file (`settings.json`) in Tauri's app config dir
+//! spending cap, voice detection, closing to the tray) are stored as a JSON file (`settings.json`) in Tauri's app config dir
 //! (`%APPDATA%\io.github.fatuking.livedubvoice`). The OpenAI API key is never part of this file:
 //! it lives only in Windows Credential Manager.
 //!
@@ -21,8 +21,9 @@ use crate::persist::{with_suffix, write_atomic};
 /// Current version of the settings file format. Bump it when the shape changes, and add the
 /// step from the previous version to [`migrate`].
 ///
-/// History: 1 = initial format; 2 = adds `uiLanguage`; 3 = adds `spendingCap`.
-pub const SETTINGS_VERSION: u32 = 3;
+/// History: 1 = initial format; 2 = adds `uiLanguage`; 3 = adds `spendingCap`; 4 = adds
+/// `voiceActivity`, `closeQuitsApp` and `trayNoticeShown`.
+pub const SETTINGS_VERSION: u32 = 4;
 
 /// Name of the settings file inside the app config dir.
 pub const SETTINGS_FILE_NAME: &str = "settings.json";
@@ -32,6 +33,12 @@ pub const MAX_ORIGINAL_VOLUME: u8 = 100;
 
 /// Highest spending cap accepted, in US dollars (per day or per month).
 pub const MAX_SPENDING_CAP_USD: f64 = 10_000.0;
+
+/// Longest auto-off time accepted, in minutes.
+pub const MAX_AUTO_OFF_MINUTES: u32 = 240;
+
+/// Default auto-off time, in minutes.
+pub const DEFAULT_AUTO_OFF_MINUTES: u32 = 5;
 
 /// A target language of the translator (`session.audio.output.language`).
 ///
@@ -199,6 +206,26 @@ pub struct SpendingCapSettings {
     pub monthly_usd: Option<f64>,
 }
 
+/// Local voice detection, for both directions (see [`crate::pipeline::voice`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct VoiceActivitySettings {
+    /// Stop sending audio to OpenAI while nobody speaks (silence that is not sent is not
+    /// billed). On by default.
+    pub pause_when_silent: bool,
+    /// Stop a direction after this many minutes without speech; `None` = never.
+    pub auto_off_minutes: Option<u32>,
+}
+
+impl Default for VoiceActivitySettings {
+    fn default() -> Self {
+        Self {
+            pause_when_silent: true,
+            auto_off_minutes: Some(DEFAULT_AUTO_OFF_MINUTES),
+        }
+    }
+}
+
 /// All user settings, as stored in `settings.json`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -210,6 +237,13 @@ pub struct Settings {
     pub incoming: IncomingSettings,
     pub outgoing: OutgoingSettings,
     pub spending_cap: SpendingCapSettings,
+    pub voice_activity: VoiceActivitySettings,
+    /// Closing the window quits the app (stopping the translations). Off by default: the
+    /// window hides to the tray and the translations keep running.
+    pub close_quits_app: bool,
+    /// The one-off notice that closing hides to the tray was shown. Owned by the core: a save
+    /// from the panel never turns it back off.
+    pub tray_notice_shown: bool,
 }
 
 impl Default for Settings {
@@ -220,6 +254,9 @@ impl Default for Settings {
             incoming: IncomingSettings::default(),
             outgoing: OutgoingSettings::default(),
             spending_cap: SpendingCapSettings::default(),
+            voice_activity: VoiceActivitySettings::default(),
+            close_quits_app: false,
+            tray_notice_shown: false,
         }
     }
 }
@@ -249,6 +286,13 @@ impl Settings {
         check_device_id("outgoing output device", &self.outgoing.output_device_id)?;
         check_cap("daily spending cap", self.spending_cap.daily_usd)?;
         check_cap("monthly spending cap", self.spending_cap.monthly_usd)?;
+        if let Some(minutes) = self.voice_activity.auto_off_minutes
+            && !(1..=MAX_AUTO_OFF_MINUTES).contains(&minutes)
+        {
+            return Err(invalid(format!(
+                "auto-off must be between 1 and {MAX_AUTO_OFF_MINUTES} minutes, got {minutes}"
+            )));
+        }
         Ok(())
     }
 }
@@ -306,6 +350,23 @@ pub fn migrate(value: &mut serde_json::Value) -> Result<(), String> {
             .entry("spendingCap")
             .or_insert_with(|| serde_json::json!({ "dailyUsd": null, "monthlyUsd": null }));
         version = 3;
+    }
+    if version == 3 {
+        // 3 → 4: voice detection on (pause while silent, auto-off after 5 minutes), closing
+        // the window hides to the tray, the tray notice not shown yet.
+        object.entry("voiceActivity").or_insert_with(|| {
+            serde_json::json!({
+                "pauseWhenSilent": true,
+                "autoOffMinutes": DEFAULT_AUTO_OFF_MINUTES,
+            })
+        });
+        object
+            .entry("closeQuitsApp")
+            .or_insert_with(|| serde_json::json!(false));
+        object
+            .entry("trayNoticeShown")
+            .or_insert_with(|| serde_json::json!(false));
+        version = 4;
     }
 
     object.insert("version".into(), version.into());
@@ -435,14 +496,32 @@ impl SettingsStore {
         Ok(self.lock()?.clone())
     }
 
-    /// Validates `settings`, writes them to disk and makes them current.
-    pub fn save(&self, settings: Settings) -> AppResult<Settings> {
-        settings.validate()?;
+    /// Saves settings coming from the panel: like [`save`](Self::save), but fields the core
+    /// owns keep their current value (the panel may hold a copy older than them).
+    pub fn save_from_panel(&self, settings: Settings) -> AppResult<Settings> {
+        self.update(|current| {
+            let tray_notice_shown = current.tray_notice_shown;
+            *current = settings;
+            current.tray_notice_shown = tray_notice_shown;
+        })
+    }
+
+    /// Changes the current settings with `change`, validates and saves them (all under the
+    /// lock, so concurrent changes are not lost).
+    pub fn update(&self, change: impl FnOnce(&mut Settings)) -> AppResult<Settings> {
         let mut current = self.lock()?;
+        let mut settings = current.clone();
+        change(&mut settings);
+        settings.validate()?;
         save(&self.path, &settings)?;
         *current = settings.clone();
         tracing::info!(path = %self.path.display(), "settings saved");
         Ok(settings)
+    }
+
+    /// Validates `settings`, writes them to disk and makes them current.
+    pub fn save(&self, settings: Settings) -> AppResult<Settings> {
+        self.update(|current| *current = settings)
     }
 
     fn lock(&self) -> AppResult<std::sync::MutexGuard<'_, Settings>> {
@@ -466,7 +545,7 @@ mod tests {
         assert_eq!(
             serde_json::to_value(Settings::default()).unwrap(),
             json!({
-                "version": 3,
+                "version": 4,
                 "uiLanguage": "system",
                 "incoming": {
                     "enabled": false,
@@ -481,7 +560,10 @@ mod tests {
                     "inputDeviceId": null,
                     "outputDeviceId": null
                 },
-                "spendingCap": { "dailyUsd": null, "monthlyUsd": null }
+                "spendingCap": { "dailyUsd": null, "monthlyUsd": null },
+                "voiceActivity": { "pauseWhenSilent": true, "autoOffMinutes": 5 },
+                "closeQuitsApp": false,
+                "trayNoticeShown": false
             })
         );
     }
@@ -606,9 +688,12 @@ mod tests {
         assert_eq!(
             value,
             json!({
-                "version": 3,
+                "version": 4,
                 "uiLanguage": "es",
-                "spendingCap": { "dailyUsd": null, "monthlyUsd": null }
+                "spendingCap": { "dailyUsd": null, "monthlyUsd": null },
+                "voiceActivity": { "pauseWhenSilent": true, "autoOffMinutes": 5 },
+                "closeQuitsApp": false,
+                "trayNoticeShown": false
             })
         );
     }
@@ -685,10 +770,14 @@ mod tests {
 
         assert_eq!(settings.incoming.target_language, Language::English);
         assert_eq!(settings.outgoing.target_language, Language::Spanish);
-        // Everything is kept; only the version and the (off) spending cap are new.
+        // Everything is kept; only the version, the (off) spending cap and the voice and tray
+        // settings are new.
         let mut expected = file;
-        expected["version"] = json!(3);
+        expected["version"] = json!(4);
         expected["spendingCap"] = json!({ "dailyUsd": null, "monthlyUsd": null });
+        expected["voiceActivity"] = json!({ "pauseWhenSilent": true, "autoOffMinutes": 5 });
+        expected["closeQuitsApp"] = json!(false);
+        expected["trayNoticeShown"] = json!(false);
         assert_eq!(serde_json::to_value(&settings).unwrap(), expected);
         assert!(!backup_path(&path).exists());
     }
@@ -710,6 +799,107 @@ mod tests {
         assert_eq!(settings.ui_language, UiLanguage::Spanish);
         assert_eq!(settings.incoming.original_volume, 30);
         assert!(!backup_path(&path).exists());
+    }
+
+    #[test]
+    fn version_3_file_migrates_with_voice_detection_on_and_close_to_tray() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(SETTINGS_FILE_NAME);
+        fs::write(
+            &path,
+            r#"{ "version": 3, "uiLanguage": "en", "spendingCap": { "dailyUsd": 2.5, "monthlyUsd": null } }"#,
+        )
+        .unwrap();
+
+        let settings = load(&path);
+
+        assert_eq!(settings.version, 4);
+        assert_eq!(settings.ui_language, UiLanguage::English);
+        assert_eq!(settings.spending_cap.daily_usd, Some(2.5));
+        assert_eq!(
+            settings.voice_activity,
+            VoiceActivitySettings {
+                pause_when_silent: true,
+                auto_off_minutes: Some(5),
+            }
+        );
+        assert!(!settings.close_quits_app);
+        assert!(!settings.tray_notice_shown);
+        assert!(!backup_path(&path).exists());
+    }
+
+    #[test]
+    fn migrate_keeps_voice_and_tray_settings_already_present() {
+        let mut value = json!({
+            "version": 3,
+            "voiceActivity": { "pauseWhenSilent": false, "autoOffMinutes": null },
+            "closeQuitsApp": true
+        });
+
+        migrate(&mut value).unwrap();
+
+        assert_eq!(value["version"], json!(4));
+        assert_eq!(
+            value["voiceActivity"],
+            json!({ "pauseWhenSilent": false, "autoOffMinutes": null })
+        );
+        assert_eq!(value["closeQuitsApp"], json!(true));
+        assert_eq!(value["trayNoticeShown"], json!(false));
+    }
+
+    #[test]
+    fn voice_and_tray_settings_round_trip() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(SETTINGS_FILE_NAME);
+        let settings = Settings {
+            voice_activity: VoiceActivitySettings {
+                pause_when_silent: false,
+                auto_off_minutes: None,
+            },
+            close_quits_app: true,
+            tray_notice_shown: true,
+            ..Settings::default()
+        };
+
+        save(&path, &settings).unwrap();
+
+        assert_eq!(load(&path), settings);
+    }
+
+    #[test]
+    fn validate_rejects_auto_off_out_of_range() {
+        for minutes in [0, MAX_AUTO_OFF_MINUTES + 1] {
+            let mut settings = Settings::default();
+            settings.voice_activity.auto_off_minutes = Some(minutes);
+            assert!(
+                matches!(settings.validate(), Err(AppError::InvalidSettings(_))),
+                "{minutes} minutes accepted"
+            );
+        }
+        let mut settings = Settings::default();
+        settings.voice_activity.auto_off_minutes = Some(MAX_AUTO_OFF_MINUTES);
+        assert!(settings.validate().is_ok());
+    }
+
+    #[test]
+    fn a_panel_save_keeps_the_tray_notice_shown() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = SettingsStore::load(dir.path().join(SETTINGS_FILE_NAME));
+        let panel_copy = store.get().unwrap();
+        store
+            .update(|settings| settings.tray_notice_shown = true)
+            .unwrap();
+
+        let saved = store
+            .save_from_panel(Settings {
+                close_quits_app: true,
+                ..panel_copy
+            })
+            .unwrap();
+
+        assert!(saved.tray_notice_shown);
+        assert!(saved.close_quits_app);
+        assert_eq!(load(store.path()), saved);
     }
 
     #[test]

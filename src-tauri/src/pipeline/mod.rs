@@ -22,6 +22,7 @@ pub mod recorder;
 #[cfg(test)]
 pub(crate) mod testing;
 pub mod translation;
+pub mod voice;
 
 use std::path::PathBuf;
 

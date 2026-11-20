@@ -1,0 +1,34 @@
+.ld-voice {
+  --voice-color: var(--color-text-muted);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
+  margin: 0;
+  font-size: var(--font-size-sm);
+}
+
+.ld-voice__icon {
+  flex: none;
+  color: var(--voice-color);
+  transition: color var(--duration-fast) var(--easing-standard);
+}
+
+.ld-voice__label {
+  font-weight: var(--font-weight-semibold);
+  color: var(--voice-color);
+  transition: color var(--duration-fast) var(--easing-standard);
+}
+
+.ld-voice__hint {
+  color: var(--color-text-muted);
+}
+
+/* Speaking takes the direction's color: teal for incoming, coral for outgoing. */
+.ld-voice--incoming.ld-voice--speaking {
+  --voice-color: var(--color-incoming);
+}
+
+.ld-voice--outgoing.ld-voice--speaking {
+  --voice-color: var(--color-outgoing);
+}

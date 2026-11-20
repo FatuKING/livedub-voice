@@ -14,12 +14,14 @@ use crate::audio::{self, AudioApp, AudioDevice, InputLevel, Monitor, MonitorEven
 use crate::credentials::validation::{KeyValidation, KeyValidator};
 use crate::credentials::{ApiKeyStatus, Credentials};
 use crate::error::{AppError, AppResult};
+use crate::pipeline::voice::VoiceActivity;
 use crate::pipeline::{
     Direction, EventSink, PipelineEvent, PipelineManager, PipelineStatus, StartPlan, WasapiIo,
     incoming, outgoing,
 };
 use crate::settings::{Settings, SettingsStore};
 use crate::translator::{FakeTranslator, OpenAiTranslator, Translator};
+use crate::tray::{self, TrayLabels};
 use crate::usage::{UsageMeter, UsageNotice, UsageNotify, UsageSnapshot, metered_sink};
 
 /// Product name shown to the user.
@@ -66,11 +68,13 @@ pub fn get_settings(store: State<'_, SettingsStore>) -> AppResult<Settings> {
     store.get()
 }
 
-/// Validates and saves the settings, returning what was saved.
+/// Validates and saves the settings, returning what was saved. `trayNoticeShown` keeps the
+/// core's value (see [`SettingsStore::save_from_panel`]).
 ///
 /// A running incoming translation applies the new original-audio volume at once, and the
 /// spending cap applies at once (a `usage-updated` event follows); every other change applies
-/// the next time its direction starts (see [`crate::pipeline::manager`]).
+/// the next time its direction starts (see [`crate::pipeline::manager`]). `closeQuitsApp`
+/// applies to the next close.
 #[tauri::command]
 pub fn save_settings(
     app: AppHandle,
@@ -79,7 +83,7 @@ pub fn save_settings(
     meter: State<'_, Arc<UsageMeter>>,
     settings: Settings,
 ) -> AppResult<Settings> {
-    let saved = store.save(settings)?;
+    let saved = store.save_from_panel(settings)?;
     pipelines.set_original_volume(saved.incoming.original_volume);
     meter.set_cap(saved.spending_cap);
     emit_usage(&app, &meter);
@@ -300,6 +304,11 @@ struct EventNames {
     transcript: &'static str,
     /// The seconds of input audio sent since start; payload `{ seconds }`.
     audio_sent: &'static str,
+    /// The voice indicator (`VoiceActivity`: `{ speaking, sending }`), on every change.
+    voice: &'static str,
+    /// The direction stopped itself after no speech for the auto-off time; payload
+    /// `{ minutes }`.
+    auto_off: &'static str,
 }
 
 /// Event with the outgoing pipeline's status (`PipelineStatus`: `{ state, error, reconnect }`).
@@ -310,6 +319,11 @@ pub const OUTGOING_LEVEL_EVENT: &str = "outgoing-level";
 pub const OUTGOING_TRANSCRIPT_EVENT: &str = "outgoing-transcript";
 /// Event with the seconds of microphone audio sent since start; payload `{ seconds }`.
 pub const OUTGOING_AUDIO_SENT_EVENT: &str = "outgoing-audio-sent";
+/// Event with the outgoing voice indicator (`VoiceActivity`), on every change.
+pub const OUTGOING_VOICE_EVENT: &str = "outgoing-voice";
+/// Event sent when the outgoing translation stops after no speech for the auto-off time;
+/// payload `{ minutes }`.
+pub const OUTGOING_AUTO_OFF_EVENT: &str = "outgoing-auto-off";
 
 /// Event with the incoming pipeline's status (`PipelineStatus`: `{ state, error, reconnect }`).
 pub const INCOMING_STATUS_EVENT: &str = "incoming-status";
@@ -320,12 +334,19 @@ pub const INCOMING_LEVEL_EVENT: &str = "incoming-level";
 pub const INCOMING_TRANSCRIPT_EVENT: &str = "incoming-transcript";
 /// Event with the seconds of app audio sent since start; payload `{ seconds }`.
 pub const INCOMING_AUDIO_SENT_EVENT: &str = "incoming-audio-sent";
+/// Event with the incoming voice indicator (`VoiceActivity`), on every change.
+pub const INCOMING_VOICE_EVENT: &str = "incoming-voice";
+/// Event sent when the incoming translation stops after no speech for the auto-off time;
+/// payload `{ minutes }`.
+pub const INCOMING_AUTO_OFF_EVENT: &str = "incoming-auto-off";
 
 const OUTGOING_EVENTS: EventNames = EventNames {
     status: OUTGOING_STATUS_EVENT,
     level: OUTGOING_LEVEL_EVENT,
     transcript: OUTGOING_TRANSCRIPT_EVENT,
     audio_sent: OUTGOING_AUDIO_SENT_EVENT,
+    voice: OUTGOING_VOICE_EVENT,
+    auto_off: OUTGOING_AUTO_OFF_EVENT,
 };
 
 const INCOMING_EVENTS: EventNames = EventNames {
@@ -333,6 +354,8 @@ const INCOMING_EVENTS: EventNames = EventNames {
     level: INCOMING_LEVEL_EVENT,
     transcript: INCOMING_TRANSCRIPT_EVENT,
     audio_sent: INCOMING_AUDIO_SENT_EVENT,
+    voice: INCOMING_VOICE_EVENT,
+    auto_off: INCOMING_AUTO_OFF_EVENT,
 };
 
 /// Where ducked app volumes are remembered until restored (`ducking.json` in the app config dir).
@@ -350,6 +373,13 @@ pub struct AudioSent {
     pub seconds: f64,
 }
 
+/// Payload of the `*-auto-off` events.
+#[derive(Debug, Clone, Serialize)]
+pub struct AutoOff {
+    /// The auto-off time that passed without speech.
+    pub minutes: u64,
+}
+
 /// Starts translating the microphone into the virtual cable, with the saved `outgoing` settings.
 ///
 /// Does nothing if it is already running. Fails (and emits an `error` status) without an API key
@@ -362,30 +392,8 @@ pub struct AudioSent {
 /// Refused with `spending_cap_reached` (no status event) while the spending cap is reached and
 /// not overridden for today.
 #[tauri::command]
-pub async fn start_outgoing(
-    app: AppHandle,
-    store: State<'_, SettingsStore>,
-    credentials: State<'_, Credentials>,
-    pipelines: State<'_, PipelineManager>,
-    meter: State<'_, Arc<UsageMeter>>,
-) -> AppResult<()> {
-    meter.check_start()?;
-    let events = metered_events(app, meter.inner(), Direction::Outgoing, OUTGOING_EVENTS);
-    pipelines
-        .start(Direction::Outgoing, events, async {
-            let settings = store.get()?.outgoing;
-            let translator = translator(&credentials)?;
-            let devices = list_audio_devices().await?;
-            if !outgoing::check_devices(&settings, &devices)? {
-                tracing::warn!("the outgoing output is not a known virtual cable");
-            }
-            Ok(StartPlan {
-                config: outgoing::config(&settings),
-                translator,
-                io: Arc::new(WasapiIo::default()),
-            })
-        })
-        .await
+pub async fn start_outgoing(app: AppHandle) -> AppResult<()> {
+    start_translation(&app, Direction::Outgoing).await
 }
 
 /// Stops the outgoing translation, if it is running, and waits until it has stopped.
@@ -415,28 +423,51 @@ pub fn get_outgoing_status(pipelines: State<'_, PipelineManager>) -> PipelineSta
 /// Refused with `spending_cap_reached` (no status event) while the spending cap is reached and
 /// not overridden for today.
 #[tauri::command]
-pub async fn start_incoming(
-    app: AppHandle,
-    store: State<'_, SettingsStore>,
-    credentials: State<'_, Credentials>,
-    journal: State<'_, DuckingJournal>,
-    pipelines: State<'_, PipelineManager>,
-    meter: State<'_, Arc<UsageMeter>>,
-) -> AppResult<()> {
+pub async fn start_incoming(app: AppHandle) -> AppResult<()> {
+    start_translation(&app, Direction::Incoming).await
+}
+
+/// Starts `direction` with the saved settings (see [`start_outgoing`] and [`start_incoming`]);
+/// also used by the tray menu.
+pub async fn start_translation(app: &AppHandle, direction: Direction) -> AppResult<()> {
+    let meter = app.state::<Arc<UsageMeter>>();
     meter.check_start()?;
-    let events = metered_events(app, meter.inner(), Direction::Incoming, INCOMING_EVENTS);
-    pipelines
-        .start(Direction::Incoming, events, async {
-            let settings = store.get()?.incoming;
-            let translator = translator(&credentials)?;
-            let devices = list_audio_devices().await?;
-            incoming::check_devices(&settings, &devices)?;
-            Ok(StartPlan {
-                config: incoming::config(&settings),
-                translator,
-                io: Arc::new(WasapiIo::with_ducking_journal(journal.0.clone())),
-            })
-        })
+    let names = match direction {
+        Direction::Incoming => INCOMING_EVENTS,
+        Direction::Outgoing => OUTGOING_EVENTS,
+    };
+    let events = metered_events(app.clone(), meter.inner(), direction, names);
+    let store = app.state::<SettingsStore>();
+    let credentials = app.state::<Credentials>();
+    let journal = app.state::<DuckingJournal>().0.clone();
+    let prepare = async {
+        let settings = store.get()?;
+        let translator = translator(&credentials)?;
+        let devices = list_audio_devices().await?;
+        let plan = match direction {
+            Direction::Outgoing => {
+                if !outgoing::check_devices(&settings.outgoing, &devices)? {
+                    tracing::warn!("the outgoing output is not a known virtual cable");
+                }
+                StartPlan {
+                    config: outgoing::config(&settings.outgoing, &settings.voice_activity),
+                    translator,
+                    io: Arc::new(WasapiIo::default()),
+                }
+            }
+            Direction::Incoming => {
+                incoming::check_devices(&settings.incoming, &devices)?;
+                StartPlan {
+                    config: incoming::config(&settings.incoming, &settings.voice_activity),
+                    translator,
+                    io: Arc::new(WasapiIo::with_ducking_journal(journal)),
+                }
+            }
+        };
+        Ok(plan)
+    };
+    app.state::<PipelineManager>()
+        .start(direction, events, prepare)
         .await
 }
 
@@ -452,6 +483,30 @@ pub async fn stop_incoming(pipelines: State<'_, PipelineManager>) -> AppResult<(
 #[tauri::command]
 pub fn get_incoming_status(pipelines: State<'_, PipelineManager>) -> PipelineStatus {
     pipelines.status(Direction::Incoming)
+}
+
+/// The tray menu's strings, in the panel's language. The panel sends them at startup and when
+/// the app language changes.
+#[tauri::command]
+pub fn set_tray_labels(app: AppHandle, labels: TrayLabels) {
+    tray::set_labels(&app, labels);
+}
+
+/// Hides the window to the tray (the translations keep running), remembering that the one-off
+/// tray notice was shown.
+#[tauri::command]
+pub fn hide_to_tray(app: AppHandle, store: State<'_, SettingsStore>) -> AppResult<()> {
+    store.update(|settings| settings.tray_notice_shown = true)?;
+    tray::hide_window(&app);
+    Ok(())
+}
+
+/// Quits LiveDub Voice: both translations stop (gracefully, see [`shut_down_pipelines`]) and
+/// the app exits.
+#[tauri::command]
+pub fn quit_app(app: AppHandle) {
+    tracing::info!("quit from the panel");
+    app.exit(0);
 }
 
 /// Longest the app waits, when it exits, for both translations to close their sessions,
@@ -503,20 +558,47 @@ fn metered_events(
     names: EventNames,
 ) -> EventSink {
     let notify = usage_notify(app.clone(), Arc::clone(meter));
-    metered_sink(Arc::clone(meter), direction, event_sink(app, names), notify)
+    metered_sink(
+        Arc::clone(meter),
+        direction,
+        event_sink(app, direction, names),
+        notify,
+    )
 }
 
-/// Forwards a pipeline's events to the panel.
-fn event_sink(app: AppHandle, names: EventNames) -> EventSink {
+/// Forwards a pipeline's events to the panel (and status changes to the tray). On `NoSpeech`
+/// (auto-off) it stops the direction through the manager and tells the panel why.
+fn event_sink(app: AppHandle, direction: Direction, names: EventNames) -> EventSink {
     Arc::new(move |event| {
         let result = match event {
-            PipelineEvent::Status(status) => app.emit(names.status, status),
+            PipelineEvent::Status(status) => {
+                tray::refresh(&app);
+                app.emit(names.status, status)
+            }
             PipelineEvent::Level(level) => app.emit(names.level, level),
             PipelineEvent::TranscriptDelta(delta) => {
                 app.emit(names.transcript, TranscriptDelta { delta })
             }
             PipelineEvent::AudioSent { seconds } => {
                 app.emit(names.audio_sent, AudioSent { seconds })
+            }
+            PipelineEvent::Voice(activity) => app.emit::<VoiceActivity>(names.voice, activity),
+            PipelineEvent::NoSpeech { after } => {
+                tracing::info!(
+                    direction = direction.name(),
+                    minutes = after.as_secs() / 60,
+                    "auto-off: stopping after no speech"
+                );
+                let stopping = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    stopping.state::<PipelineManager>().stop(direction).await;
+                });
+                app.emit(
+                    names.auto_off,
+                    AutoOff {
+                        minutes: after.as_secs() / 60,
+                    },
+                )
             }
         };
         if let Err(error) = result {

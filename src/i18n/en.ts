@@ -46,6 +46,11 @@ export const en = {
           "The headphones chosen in Settings are not connected. Plug them in, or choose another output.",
       },
       stopped: "The incoming translation stopped: {error}",
+      autoOff: {
+        one: "The incoming translation turned itself off after {count} minute without speech.",
+        other:
+          "The incoming translation turned itself off after {count} minutes without speech.",
+      },
       reconnecting:
         "Lost the connection to OpenAI. Reconnecting… Until then the original audio plays at its lowered volume, without translation.",
     },
@@ -68,6 +73,11 @@ export const en = {
           "The output chosen in Settings is not connected. Install or plug in the virtual cable, or choose another output.",
       },
       stopped: "The outgoing translation stopped: {error}",
+      autoOff: {
+        one: "The outgoing translation turned itself off after {count} minute without speech.",
+        other:
+          "The outgoing translation turned itself off after {count} minutes without speech.",
+      },
       reconnecting:
         "Lost the connection to OpenAI. Reconnecting… Until then others hear nothing from you.",
     },
@@ -89,6 +99,14 @@ export const en = {
     defaultMicrophone: "Default microphone",
     notSet: "Not set",
     openSettings: "Open settings",
+    /** The voice indicator of a running direction. */
+    voice: {
+      label: "Voice",
+      speaking: "Speaking",
+      listening: "Listening",
+      pausedHint: "Nobody is speaking: no audio is sent to OpenAI.",
+      sendingHint: "Audio is being sent to OpenAI.",
+    },
   },
 
   settings: {
@@ -156,6 +174,36 @@ export const en = {
         "No virtual cable found. Install a virtual cable such as VB-CABLE, then refresh the devices.",
       appliesNextStart:
         "The outgoing translation is running. Changes here apply the next time you start it.",
+    },
+    voice: {
+      eyebrow: "Both directions",
+      title: "Voice detection",
+      ariaLabel: "Voice detection",
+      pauseWhenSilent: "Don't send silence",
+      pauseWhenSilentHint:
+        "Only speech goes to OpenAI, plus about a second after each phrase so it gets finished. Silence that is not sent is not counted in Usage. Turn it off if the first words of a phrase get lost.",
+      autoOff: "Turn off when nobody speaks",
+      autoOffHint:
+        "Stops a direction after this long without speech, so a translation left on does not keep running.",
+      autoOffNever: "Never",
+      autoOffMinutes: {
+        one: "After {count} minute",
+        other: "After {count} minutes",
+      },
+      appliesNextStart:
+        "A translation is running. Changes here apply the next time it starts.",
+    },
+    window: {
+      eyebrow: "Window",
+      title: "Closing the window",
+      ariaLabel: "Closing the window",
+      closeQuitsApp: "Closing the window quits the app",
+      closeQuitsAppHint:
+        "When off, closing the window hides LiveDub Voice to the system tray (next to the clock) and the translations keep running.",
+      quit: "Quit LiveDub Voice",
+      quitHint:
+        "Stops both translations, gives the apps their volume back and closes the app.",
+      quitError: "Could not quit: {error}",
     },
   },
 
@@ -301,6 +349,33 @@ export const en = {
         "This cap only covers LiveDub Voice on this computer, and the cost is estimated. A budget in the OpenAI dashboard is the real safety net.",
       openError: "Could not open the OpenAI dashboard: {error}",
     },
+  },
+
+  /** The system tray menu (built by the core in the panel's language). */
+  tray: {
+    open: "Open LiveDub Voice",
+    quit: "Quit LiveDub Voice",
+    incoming: "Incoming (others → you)",
+    outgoing: "Outgoing (you → others)",
+    states: {
+      idle: "Off",
+      connecting: "Connecting…",
+      live: "Live",
+      reconnecting: "Reconnecting…",
+      stopping: "Finishing…",
+      error: "Error",
+    },
+  },
+
+  /** The one-off notice the first time the window is closed. */
+  closeToTray: {
+    title: "LiveDub Voice keeps running",
+    text: "Closing the window hides LiveDub Voice to the system tray, next to the clock, and the translations keep running. Click the tray icon to open it again, or right-click it to start or stop a translation or quit.",
+    settingHint:
+      "To quit when you close the window instead, turn on “Closing the window quits the app” in Settings.",
+    hide: "Got it, hide to the tray",
+    quit: "Quit LiveDub Voice",
+    error: "Could not close the window: {error}",
   },
 
   /** The spending cap's notices, on Home, Usage and next to Start. */
