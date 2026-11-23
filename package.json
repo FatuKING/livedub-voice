@@ -12,6 +12,8 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "icons": "node scripts/icons.mjs",
+    "version:check": "node scripts/version.mjs check",
+    "version:bump": "node scripts/version.mjs bump",
     "typecheck": "tsc --noEmit",
     "lint": "pnpm typecheck && pnpm lint:ts && pnpm lint:format && pnpm lint:rust",
     "lint:ts": "eslint .",

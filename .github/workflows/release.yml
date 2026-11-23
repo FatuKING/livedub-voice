@@ -1,0 +1,199 @@
+# Builds the Windows installer and publishes it as a GitHub Release.
+#
+# - Push a `vX.Y.Z` tag on `main` → build, then publish the release (see docs/releasing.md).
+#   A pre-release tag (`v0.2.0-beta.1`) publishes a pre-release, which `releases/latest` skips.
+# - Run it by hand (workflow_dispatch) or open a PR that touches the release files → dry run:
+#   the same build, with the installer, SHA256SUMS.txt and the release notes uploaded as a
+#   workflow artifact, and nothing published.
+#
+# Release assets (names are stable so links to them can be built):
+#   LiveDub-Voice_<version>_x64-setup.exe   the NSIS installer
+#   LiveDub-Voice_x64-setup.exe             the same file, for releases/latest/download/<name>
+#   SHA256SUMS.txt                          SHA-256 of both, `sha256sum -c` format
+#
+# Actions are pinned to commit SHAs (the comment says which release) because the publish job
+# holds a token that can write to the repository.
+
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/release.yml
+      - .github/release-notes.md
+      - scripts/version.mjs
+      - src-tauri/tauri.conf.json
+      - src-tauri/installer/**
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build:
+    name: build
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Full history, to check that a release tag is on `main`.
+          fetch-depth: 0
+          persist-credentials: false
+
+      # Before anything slow: a tag that does not match the version in the files, or that is
+      # not on `main`, fails here.
+      - name: Check the version
+        id: version
+        shell: bash
+        env:
+          EVENT: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          if [ "$EVENT" = push ]; then
+            version=$(node scripts/version.mjs check "$REF_NAME")
+            tag=$REF_NAME
+            if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+              echo "::error::Tag $tag points at $GITHUB_SHA, which is not on main. Tag a commit of main."
+              exit 1
+            fi
+          else
+            version=$(node scripts/version.mjs check)
+            tag="v$version"
+          fi
+          case "$version" in
+            *-*) prerelease=true ;;
+            *) prerelease=false ;;
+          esac
+          echo "Version $version, tag $tag, prerelease $prerelease"
+          {
+            echo "version=$version"
+            echo "tag=$tag"
+            echo "prerelease=$prerelease"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable branch, 2026-11-15
+        with:
+          toolchain: stable
+
+      # Release builds share one cache, saved only by runs on `main` (a manual run there warms
+      # it). Tag and PR runs can restore caches of `main`, but caches they saved could only be
+      # used by the same tag or PR.
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: src-tauri
+          shared-key: release
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # TODO(code signing): once there is a certificate, sign the app and the installer here
+      # (`bundle.windows.signCommand` or `certificateThumbprint` in tauri.conf.json, with the
+      # secrets only in this job) and drop the SmartScreen note from .github/release-notes.md.
+      - name: Build the installer
+        run: pnpm tauri build --ci
+
+      - name: Collect the release assets
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          TAG: ${{ steps.version.outputs.tag }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          shopt -s nullglob
+          installers=(src-tauri/target/release/bundle/nsis/*-setup.exe)
+          if [ "${#installers[@]}" -ne 1 ]; then
+            echo "::error::Expected one NSIS installer, found ${#installers[@]}: ${installers[*]}"
+            exit 1
+          fi
+
+          mkdir -p out/assets
+          cp "${installers[0]}" "out/assets/LiveDub-Voice_${VERSION}_x64-setup.exe"
+          cp "${installers[0]}" "out/assets/LiveDub-Voice_x64-setup.exe"
+          # Git Bash's sha256sum marks binary files with `*`; write the usual two spaces.
+          (cd out/assets && sha256sum -- *.exe | sed 's/ \*/  /' > SHA256SUMS.txt)
+          cat out/assets/SHA256SUMS.txt
+
+          sed -e "s|{{VERSION}}|$VERSION|g" -e "s|{{TAG}}|$TAG|g" -e "s|{{REPOSITORY}}|$REPOSITORY|g" \
+            .github/release-notes.md > out/release-notes.md
+          {
+            echo
+            echo '```text'
+            cat out/assets/SHA256SUMS.txt
+            echo '```'
+          } >> out/release-notes.md
+          ls -l out/assets
+
+      - name: Upload the release assets
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: LiveDub-Voice-${{ steps.version.outputs.version }}
+          path: out/
+          if-no-files-found: error
+
+  publish:
+    name: publish
+    needs: build
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      # Create the release and upload its assets. Nothing else.
+      contents: write
+    steps:
+      - name: Download the release assets
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: LiveDub-Voice-${{ needs.build.outputs.version }}
+          path: out
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.build.outputs.tag }}
+          PRERELEASE: ${{ needs.build.outputs.prerelease }}
+        run: |
+          assets=(out/assets/*)
+          # A re-run after a failed upload finds the release already there: replace its assets.
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            echo "Release $TAG exists; replacing its assets."
+            gh release upload "$TAG" "${assets[@]}" --clobber
+            exit 0
+          fi
+
+          if [ "$PRERELEASE" = true ]; then
+            flags=(--prerelease --latest=false)
+          else
+            flags=(--latest)
+          fi
+          # `--notes` is prepended to GitHub's generated notes (merged PRs, new contributors).
+          gh release create "$TAG" "${assets[@]}" \
+            --verify-tag \
+            --title "LiveDub Voice $TAG" \
+            --notes "$(cat out/release-notes.md)" \
+            --generate-notes \
+            "${flags[@]}"

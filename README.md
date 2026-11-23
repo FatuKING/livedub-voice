@@ -47,7 +47,7 @@ You pay OpenAI directly for what you use. `gpt-realtime-translate` costs **$0.03
 
 ## Installation
 
-1. Download `LiveDub Voice_<version>_x64-setup.exe` from the [Releases page](https://github.com/FatuKING/livedub-voice/releases).
+1. Download `LiveDub-Voice_<version>_x64-setup.exe` from the [latest release](https://github.com/FatuKING/livedub-voice/releases/latest). Its SHA-256 is in the release notes and in `SHA256SUMS.txt`.
 2. Run it. The installer is not code-signed yet, so Windows SmartScreen may say **"Windows protected your PC"**. Click **More info**, check that the app is _LiveDub Voice_, then click **Run anyway**.
 3. Pick the installer language (English or Spanish) and follow the steps. LiveDub Voice installs for your Windows user only, so it does not ask for administrator rights. It adds a Start menu shortcut and, unless you untick it on the last page, a desktop shortcut.
 4. If WebView2 (the component that draws the panel) is missing, the installer downloads it from Microsoft, so keep an internet connection. It is already on Windows 11 and up-to-date Windows 10.
