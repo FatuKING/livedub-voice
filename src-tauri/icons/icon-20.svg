@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 20 20">
+  <!--
+    LiveDub Voice app icon drawn for 20 px (system tray and title bar at 125 %). Five bars
+    hinted to whole pixels: two teal, the sun bar, two coral. Regenerate the icons with
+    `pnpm icons`.
+  -->
+  <rect width="20" height="20" rx="4.5" fill="#12263A"/>
+  <g fill="#2EC4B6">
+    <rect x="2" y="7" width="2" height="6" rx="1"/>
+    <rect x="5" y="5" width="2" height="10" rx="1"/>
+  </g>
+  <rect x="8" y="2" width="4" height="16" rx="2" fill="#FFC857"/>
+  <g fill="#FF7A59">
+    <rect x="13" y="5" width="2" height="10" rx="1"/>
+    <rect x="16" y="7" width="2" height="6" rx="1"/>
+  </g>
+</svg>

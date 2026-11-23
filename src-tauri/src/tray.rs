@@ -252,8 +252,8 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
 
 /// The app icon at the size Windows draws tray icons (16 px at 100 % scaling, 24 px at 150 %…).
 ///
-/// It comes from the icon embedded in the executable, whose 16, 20 and 24 px entries are a
-/// simplified drawing made for that size (`src-tauri/icons/icon-small.svg`); the default window
+/// It comes from the icon embedded in the executable, whose 16, 20 and 24 px entries are
+/// simplified drawings made for those sizes (`src-tauri/icons/icon-16.svg`…); the default window
 /// icon is the 32 px one, which Windows would shrink and blur. Falls back to the window icon.
 fn tray_image(app: &AppHandle) -> Option<tauri::image::Image<'static>> {
     #[cfg(windows)]

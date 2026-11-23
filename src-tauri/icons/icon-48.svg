@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48">
+  <!--
+    LiveDub Voice app icon drawn for 48 px (the 48 px entry of icon.ico and the installer
+    header). Same mark as icon.svg, hinted to whole pixels: bars 3 px (the sun bar 4 px) with
+    1 px gaps. Regenerate the icons with `pnpm icons`.
+  -->
+  <rect x="1" y="1" width="46" height="46" rx="11" fill="#12263A"/>
+  <g fill="#2EC4B6">
+    <rect x="6" y="19" width="3" height="10" rx="1.5"/>
+    <rect x="10" y="16" width="3" height="16" rx="1.5"/>
+    <rect x="14" y="12" width="3" height="24" rx="1.5"/>
+    <rect x="18" y="9" width="3" height="30" rx="1.5"/>
+  </g>
+  <rect x="22" y="6" width="4" height="36" rx="2" fill="#FFC857"/>
+  <g fill="#FF7A59">
+    <rect x="27" y="9" width="3" height="30" rx="1.5"/>
+    <rect x="31" y="12" width="3" height="24" rx="1.5"/>
+    <rect x="35" y="16" width="3" height="16" rx="1.5"/>
+    <rect x="39" y="19" width="3" height="10" rx="1.5"/>
+  </g>
+</svg>

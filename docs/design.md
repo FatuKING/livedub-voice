@@ -119,7 +119,7 @@ Reusable primitives live in [`src/components/`](../src/components). Build new sc
 | `Notice`           | Inline message: `info`, `success`, `warning`, `error` (errors use `role="alert"`).                                                                |
 | `PageHeader`       | Screen title and description, optional `eyebrow` ("Step 2 of 6") and `actions` (buttons on the right); the title receives focus after navigation. |
 | `Stepper`          | Vertical step indicator (numbered buttons, `aria-current="step"`, amber marker like the active nav item); any step can be reached by keyboard.    |
-| `LogoMark`         | The app icon without its tile: a teal speech bubble (others) behind a coral one (you), with voice bars cut out in the surface color.              |
+| `LogoMark`         | The app icon without its tile: a two-tone voice wave of nine bars, teal (others), sun in the middle (translation), coral (you); crisp at 28 px.   |
 
 Icons come from `lucide-react` (ISC), imported one by one so only the icons in use are bundled. Icons next to text are decorative (`aria-hidden`).
 

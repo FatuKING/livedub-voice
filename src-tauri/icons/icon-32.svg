@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
+  <!--
+    LiveDub Voice app icon drawn for 32 px (the 32 px entry of icon.ico, used by the taskbar
+    and the window, and 32x32.png). Same mark as icon.svg, hinted to whole pixels: nine 2 px
+    bars with 1 px gaps. Regenerate the icons with `pnpm icons`.
+  -->
+  <rect x="1" y="1" width="30" height="30" rx="7" fill="#12263A"/>
+  <g fill="#2EC4B6">
+    <rect x="3" y="13" width="2" height="6" rx="1"/>
+    <rect x="6" y="11" width="2" height="10" rx="1"/>
+    <rect x="9" y="8" width="2" height="16" rx="1"/>
+    <rect x="12" y="6" width="2" height="20" rx="1"/>
+  </g>
+  <rect x="15" y="4" width="2" height="24" rx="1" fill="#FFC857"/>
+  <g fill="#FF7A59">
+    <rect x="18" y="6" width="2" height="20" rx="1"/>
+    <rect x="21" y="8" width="2" height="16" rx="1"/>
+    <rect x="24" y="11" width="2" height="10" rx="1"/>
+    <rect x="27" y="13" width="2" height="6" rx="1"/>
+  </g>
+</svg>

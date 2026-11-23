@@ -2,12 +2,13 @@
 //
 //   pnpm icons
 //
-// - `src-tauri/icons/icon.svg` (32 px and up) → all the PNGs, `icon.icns` and the large
+// - `src-tauri/icons/icon.svg` (64 px and up) → all the PNGs, `icon.icns` and the 64 and 256 px
 //   entries of `icon.ico`, through `tauri icon`.
-// - `src-tauri/icons/icon-small.svg` (no voice bars) → the 16, 20 and 24 px entries of
-//   `icon.ico`, used by the system tray, the title bar and the small taskbar.
-// - `src-tauri/icons/nsis-header.bmp` (150×57) and `nsis-sidebar.bmp` (164×314) for the
-//   installer pages.
+// - `src-tauri/icons/icon-<size>.svg` (16, 20, 24, 32, 48) → the `icon.ico` entry of that size
+//   (system tray, title bar, taskbar, Start menu, desktop) and, for 32, `32x32.png`. They are the
+//   same mark drawn on that size's pixel grid, so the bars stay crisp; 16 to 24 px keep five bars.
+// - `src-tauri/icons/nsis-header.bmp` (150×57, with the 48 px icon) and `nsis-sidebar.bmp`
+//   (164×314) for the installer pages.
 //
 // Only Node and the Tauri CLI are needed: the PNGs `tauri icon` writes are decoded here and the
 // ICO and BMP files are written by hand.
@@ -26,9 +27,9 @@ const tauriCli = createRequire(import.meta.url).resolve(
   "@tauri-apps/cli/tauri.js",
 );
 
-/** Sizes of `icon.ico` drawn from the small master; the rest come from the full one. */
-const SMALL_SIZES = [16, 20, 24];
-const LARGE_SIZES = [32, 48, 64, 256];
+/** Sizes of `icon.ico` drawn from their own pixel-hinted master; the rest come from icon.svg. */
+const HINTED_SIZES = [16, 20, 24, 32, 48];
+const LARGE_SIZES = [64, 256];
 
 /** Ruta colors used around the icon in the installer images. */
 const NAVY = [0x12, 0x26, 0x3a]; // dark --color-surface, the icon's tile
@@ -166,6 +167,20 @@ function encodeBmp(width, height, background, icon, x, y) {
   return bmp;
 }
 
+/**
+ * Rewrites an ICNS with its entries sorted by type. `tauri icon` writes them in a random order,
+ * so without this every run changes `icon.icns` even when the drawing did not change.
+ */
+function sortIcns(file) {
+  const icns = readFileSync(file);
+  const entries = [];
+  for (let pos = 8; pos < icns.length; pos += icns.readUInt32BE(pos + 4)) {
+    entries.push(icns.subarray(pos, pos + icns.readUInt32BE(pos + 4)));
+  }
+  entries.sort((a, b) => Buffer.compare(a.subarray(0, 4), b.subarray(0, 4)));
+  writeFileSync(file, Buffer.concat([icns.subarray(0, 8), ...entries]));
+}
+
 rmSync(work, { recursive: true, force: true });
 mkdirSync(work, { recursive: true });
 
@@ -175,19 +190,27 @@ tauriIcon("src-tauri/icons/icon.svg");
 for (const mobile of ["android", "ios"]) {
   rmSync(join(icons, mobile), { recursive: true, force: true });
 }
+sortIcns(join(icons, "icon.icns"));
 
-const small = renderPngs("src-tauri/icons/icon-small.svg", SMALL_SIZES);
+const hinted = Object.fromEntries(
+  HINTED_SIZES.map((s) => [
+    s,
+    renderPngs(`src-tauri/icons/icon-${s}.svg`, [s])[s],
+  ]),
+);
 const large = renderPngs("src-tauri/icons/icon.svg", [...LARGE_SIZES, 96]);
 writeFileSync(
   join(icons, "icon.ico"),
   encodeIco({
-    ...small,
+    ...hinted,
     ...Object.fromEntries(LARGE_SIZES.map((s) => [s, large[s]])),
   }),
 );
+// The 32 px PNG is the first icon in tauri.conf.json: use the hinted drawing there too.
+writeFileSync(join(icons, "32x32.png"), hinted[32]);
 
 // Header: the 48 px icon at the right of the white header band.
-const headerIcon = decodePng(large[48]);
+const headerIcon = decodePng(hinted[48]);
 writeFileSync(
   join(icons, "nsis-header.bmp"),
   encodeBmp(

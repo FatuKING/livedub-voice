@@ -1,16 +1,31 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
   <!--
-    LiveDub Voice app icon, master for 32 px and up. Every PNG, ICO and ICNS in this folder is
-    generated from it (and from icon-small.svg) with `pnpm icons`.
+    LiveDub Voice app icon, master for 64 px and up (PNGs, ICNS, the large entries of icon.ico,
+    the installer sidebar) and for the README and the website. The 16, 20, 24, 32 and 48 px
+    entries of icon.ico come from the pixel-hinted icon-<size>.svg files next to this one.
+    Regenerate every icon with `pnpm icons`.
 
-    Two voices in a conversation: the teal speech bubble is the others (incoming, others → you),
-    the coral one in front is you (outgoing, you → others). The bars are voice waves.
-    Colors are the Ruta dark-theme accents and surface (src/styles/tokens.css); the navy tile
-    keeps the bubbles readable on light and dark taskbars.
+    Two-tone voice wave: one voice that changes color as it gets translated. The four teal bars
+    are the others (incoming, others → you), the four coral ones are you (outgoing, you → others)
+    and the wider sun bar in the middle is the moment of translation. Colors are the Ruta
+    dark-theme accents; the navy tile is the Ruta dark surface (src/styles/tokens.css), which
+    keeps the bars readable on light and dark taskbars.
+
+    Geometry: bars 72 wide (the sun bar 88) with 24 gaps, centered on x = 512 and y = 512;
+    heights 192, 320, 512, 640, 768 from the outside in. Edges land on whole pixels at 256 px.
   -->
-  <rect x="32" y="32" width="960" height="960" rx="216" fill="#12263A"/>
-  <path d="M256 136H528A104 104 0 0 1 632 240V432A104 104 0 0 1 528 536H368L232 656L256 536A104 104 0 0 1 152 432V240A104 104 0 0 1 256 136Z" fill="#2EC4B6"/>
-  <path d="M312 220V284M392 180V324M472 212V292" stroke="#12263A" stroke-width="48" stroke-linecap="round"/>
-  <path d="M496 392H768A104 104 0 0 1 872 496V688A104 104 0 0 1 768 792L792 912L656 792H496A104 104 0 0 1 392 688V496A104 104 0 0 1 496 392Z" fill="#FF7A59" stroke="#12263A" stroke-width="40" paint-order="stroke"/>
-  <path d="M552 552V632M632 500V684M712 540V644" stroke="#12263A" stroke-width="48" stroke-linecap="round"/>
+  <rect x="32" y="32" width="960" height="960" rx="224" fill="#12263A"/>
+  <g fill="#2EC4B6">
+    <rect x="84" y="416" width="72" height="192" rx="36"/>
+    <rect x="180" y="352" width="72" height="320" rx="36"/>
+    <rect x="276" y="256" width="72" height="512" rx="36"/>
+    <rect x="372" y="192" width="72" height="640" rx="36"/>
+  </g>
+  <rect x="468" y="128" width="88" height="768" rx="44" fill="#FFC857"/>
+  <g fill="#FF7A59">
+    <rect x="580" y="192" width="72" height="640" rx="36"/>
+    <rect x="676" y="256" width="72" height="512" rx="36"/>
+    <rect x="772" y="352" width="72" height="320" rx="36"/>
+    <rect x="868" y="416" width="72" height="192" rx="36"/>
+  </g>
 </svg>
