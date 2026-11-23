@@ -129,3 +129,16 @@
 .ld-usage-table tbody tr:last-child > * {
   border-bottom: none;
 }
+
+/* Settings → First-run setup. */
+.ld-setup-card__text {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-muted);
+}
+
+/* Home → How to use. */
+.ld-home-guide {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}

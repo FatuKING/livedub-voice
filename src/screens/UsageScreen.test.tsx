@@ -31,7 +31,7 @@ const NO_CAP: CapStatus = {
 };
 
 const SETTINGS: Settings = {
-  version: 4,
+  version: 5,
   uiLanguage: "en",
   incoming: {
     enabled: false,
@@ -50,6 +50,7 @@ const SETTINGS: Settings = {
   voiceActivity: { pauseWhenSilent: true, autoOffMinutes: 5 },
   closeQuitsApp: false,
   trayNoticeShown: false,
+  onboardingCompleted: true,
 };
 
 function snapshot(overrides: Partial<UsageSnapshot> = {}): UsageSnapshot {
@@ -280,6 +281,7 @@ describe("SpendingCapCard", () => {
         voiceActivity: { pauseWhenSilent: true, autoOffMinutes: 5 },
         closeQuitsApp: false,
         trayNoticeShown: false,
+        onboardingCompleted: true,
       },
     });
   });

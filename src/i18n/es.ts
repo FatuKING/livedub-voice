@@ -95,6 +95,8 @@ export const es: Messages = {
     defaultMicrophone: "Micrófono predeterminado",
     notSet: "Sin elegir",
     openSettings: "Abrir configuración",
+    howToUse: "Cómo usar",
+    hideGuide: "Ocultar guía",
     voice: {
       label: "Voz",
       speaking: "Hablando",
@@ -198,6 +200,158 @@ export const es: Messages = {
       quitHint:
         "Detiene ambas traducciones, devuelve el volumen a las apps y cierra la app.",
       quitError: "No se pudo salir: {error}",
+    },
+    setup: {
+      eyebrow: "Configuración inicial",
+      title: "Asistente de inicio",
+      ariaLabel: "Asistente de inicio",
+      text: "Repetir los pasos de bienvenida: idioma de la app, API key, auriculares, cable virtual, privacidad y la guía rápida.",
+      runAgain: "Repetir la configuración inicial",
+    },
+  },
+
+  onboarding: {
+    stepsLabel: "Pasos de la configuración",
+    done: "hecho",
+    stepOf: "Paso {step} de {total}",
+    back: "Atrás",
+    next: "Siguiente",
+    finish: "Empezar a usar LiveDub Voice",
+    skip: "Omitir configuración",
+    skipHint: "Cada paso se puede completar más tarde en Configuración.",
+    steps: {
+      welcome: "Bienvenida",
+      apiKey: "API key de OpenAI",
+      headphones: "Auriculares",
+      cable: "Cable virtual",
+      privacy: "Privacidad",
+      guide: "Guía rápida",
+    },
+    welcome: {
+      title: "Bienvenida a LiveDub Voice",
+      description:
+        "Un intérprete en vivo para llamadas y juegos. Unos pocos pasos cortos y queda listo; cualquiera se puede omitir y retomar en Configuración.",
+      incomingText:
+        "Escuchar a las personas de la llamada o del juego en tu idioma, en tus auriculares.",
+      outgoingText:
+        "Los demás te escuchan en el suyo, a través de un micrófono virtual. No necesitan instalar nada.",
+    },
+    apiKey: {
+      title: "Conectar la cuenta de OpenAI",
+      description:
+        "LiveDub Voice traduce con el modelo gpt-realtime-translate de OpenAI, con tu propia API key. OpenAI cobra directamente a tu cuenta.",
+      howEyebrow: "Obtener una key",
+      howTitle: "Crear una API key",
+      howStep1:
+        "Iniciar sesión en platform.openai.com y agregar un medio de pago en Billing.",
+      howStep2: "Crear una key en API keys y copiarla.",
+      howStep3:
+        "Pegarla aquí abajo. Se guarda en el Administrador de credenciales de Windows y solo se envía a OpenAI.",
+      openKeys: "Abrir platform.openai.com/api-keys",
+      costEyebrow: "Costo",
+      costTitle: "Cuánto cuesta",
+      cost: "{price} por minuto de audio por cada dirección activa: unos {hourly} por hora con una dirección, el doble con las dos.",
+      budget:
+        "Conviene fijar un presupuesto mensual en el panel de OpenAI: es la verdadera red de seguridad. También se puede fijar el límite de gasto propio de LiveDub Voice en la pantalla Uso.",
+      openBudget: "Fijar un presupuesto en OpenAI",
+      openError: "No se pudo abrir el navegador: {error}",
+    },
+    headphones: {
+      title: "Usar auriculares",
+      description:
+        "Con parlantes, el micrófono capta la traducción de los demás y la devuelve a la llamada: escuchan un eco de su propia voz.",
+      cardEyebrow: "Recomendado",
+      cardTitle: "Auriculares o headset",
+      point1:
+        "La traducción entrante suena en tus auriculares. Se eligen en Configuración → Entrante → Auriculares (hasta entonces se usa la salida predeterminada).",
+      point2:
+        "Sirven auriculares con cable o inalámbricos. Lo ideal es un headset con micrófono.",
+    },
+    cable: {
+      title: "Preparar un micrófono virtual",
+      description:
+        "Windows no trae un micrófono virtual propio. LiveDub Voice reproduce tu voz traducida en un cable de audio virtual, y la llamada o el juego usa ese cable como micrófono.",
+      eyebrow: "Saliente",
+      searching: "Buscando un cable virtual…",
+      listError: "No se pudieron listar los dispositivos de audio: {error}",
+      foundTitle: "Cable virtual encontrado",
+      ready: "Listo",
+      foundText:
+        "LiveDub Voice envía tu voz traducida a {name}. En la llamada o el juego, elegir como micrófono el lado de grabación del cable (CABLE Output en VB-CABLE).",
+      chooseLabel: "Enviar tu traducción a",
+      chosen:
+        "Elegido como salida de la traducción saliente. Se puede cambiar en Configuración.",
+      saveError: "No se pudo elegir el cable: {error}",
+      missingTitle: "No se encontró ningún cable virtual",
+      missing: "Sin instalar",
+      missingText:
+        "Instalar VB-CABLE, un cable virtual gratuito: descargarlo, descomprimirlo, ejecutar VBCABLE_Setup_x64.exe como administrador y reiniciar Windows si lo pide. Después, volver a buscar. VoiceMeeter y Virtual-Audio-Driver también sirven.",
+      download: "Descargar VB-CABLE",
+      checkAgain: "Volver a buscar",
+      checking: "Buscando…",
+      incomingOnly:
+        "¿Solo interesa escuchar traducidos a los demás? Este paso se puede omitir: la traducción entrante no necesita cable.",
+      openError: "No se pudo abrir el navegador: {error}",
+    },
+    privacy: {
+      title: "Privacidad y consentimiento",
+      description: "Qué envía LiveDub Voice, y a quién.",
+      lightIntro:
+        "La configuración ya está hecha. Antes de seguir, dos cosas importantes: qué envía LiveDub Voice y cómo usarlo en tus apps.",
+      othersTitle: "Avisar que se usa un traductor",
+      others:
+        "La traducción entrante envía a OpenAI las voces de las personas con quienes se habla. Conviene avisarles que se usa un traductor en vivo y respetar las reglas de la llamada, el servidor o el juego.",
+      openaiTitle: "El audio solo va a OpenAI",
+      openai:
+        "El audio se transmite a OpenAI con tu API key y bajo los términos de OpenAI, y a nadie más. LiveDub Voice no guarda grabaciones.",
+      telemetryTitle: "Sin telemetría",
+      telemetry:
+        "LiveDub Voice no recopila datos de uso ni informes de errores. Los minutos y costos se cuentan solo en esta computadora.",
+    },
+  },
+
+  guide: {
+    title: "Cómo usar LiveDub Voice",
+    description:
+      "Cada dirección se inicia desde Inicio, y en la llamada o el juego se elige el cable virtual como micrófono.",
+    incoming: {
+      eyebrow: "Entrante · voces de los demás",
+      title: "Escuchar a los demás en tu idioma",
+      step1:
+        "En Configuración → Entrante, elegir la app a traducir (Discord, el navegador, Teams, un juego) o todo el sistema, y tus auriculares.",
+      step2: "En Inicio, pulsar Iniciar entrante.",
+      step3:
+        "El audio original baja de volumen y la traducción suena encima, un par de segundos después.",
+    },
+    outgoing: {
+      eyebrow: "Saliente · tu voz",
+      title: "Los demás te escuchan en su idioma",
+      step1:
+        "En la llamada o el juego, elegir CABLE Output como micrófono (ver la tabla de abajo).",
+      step2: "En Inicio, pulsar Iniciar saliente y hablar con normalidad.",
+      step3:
+        "Los demás escuchan la traducción un par de segundos después de hablar.",
+    },
+    mic: {
+      eyebrow: "Micrófono",
+      title: "Qué micrófono elegir",
+      intro:
+        "Elegir CABLE Output (VB-Audio Virtual Cable), o el lado de grabación de tu cable, y no el micrófono real: LiveDub Voice ya lo escucha.",
+      caption: "Dónde se elige el micrófono en cada app",
+      app: "App",
+      where: "Dónde",
+      discord: "Discord",
+      discordWhere: "Ajustes de usuario → Voz y vídeo → Dispositivo de entrada",
+      meet: "Google Meet",
+      meetWhere: "Configuración (ícono de engranaje) → Audio → Micrófono",
+      teams: "Microsoft Teams",
+      teamsWhere: "Configuración → Dispositivos → Micrófono",
+      whatsapp: "WhatsApp Web",
+      whatsappWhere:
+        "Usa el micrófono del navegador: se elige desde el ícono de cámara/micrófono de la barra de direcciones, o en la configuración de sitios del navegador",
+      games: "Juegos",
+      gamesWhere:
+        "Ajustes del chat de voz → Dispositivo de entrada. Si no existe, poner CABLE Output como dispositivo de grabación predeterminado en la configuración de Sonido de Windows",
     },
   },
 

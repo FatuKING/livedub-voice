@@ -79,11 +79,16 @@ function describe(
   return { tone, text: t(`apiKey.result.${validation.kind}`) };
 }
 
+export interface ApiKeyCardProps {
+  /** Show the paragraph about where to get a key and what it costs (the onboarding has its own). */
+  showIntro?: boolean;
+}
+
 /**
  * OpenAI API key: save and validate, re-check and remove. The key is stored by the core in
  * Windows Credential Manager; the panel only ever sees its last four characters.
  */
-function ApiKeyCard() {
+function ApiKeyCard({ showIntro = true }: ApiKeyCardProps) {
   const { t, rich, format } = useI18n();
   const [status, setStatus] = useState<ApiKeyStatus | null>(null);
   const [state, setState] = useState<KeyState>({ kind: "loading" });
@@ -180,17 +185,19 @@ function ApiKeyCard() {
       aria-label={t("apiKey.ariaLabel")}
       aside={<StatusPill tone={pill.tone}>{pill.label}</StatusPill>}
     >
-      <p className="ld-api-key__intro">
-        {t("apiKey.intro", {
-          price: format.currency(PRICE_PER_MINUTE_USD, {
-            maximumFractionDigits: 3,
-          }),
-          // Both directions on: 2 × 60 minutes.
-          hourly: format.currency(PRICE_PER_MINUTE_USD * 120, {
-            maximumFractionDigits: 0,
-          }),
-        })}
-      </p>
+      {showIntro && (
+        <p className="ld-api-key__intro">
+          {t("apiKey.intro", {
+            price: format.currency(PRICE_PER_MINUTE_USD, {
+              maximumFractionDigits: 3,
+            }),
+            // Both directions on: 2 × 60 minutes.
+            hourly: format.currency(PRICE_PER_MINUTE_USD * 120, {
+              maximumFractionDigits: 0,
+            }),
+          })}
+        </p>
+      )}
 
       {hasKey && status?.last4 != null && (
         <p className="ld-api-key__saved">

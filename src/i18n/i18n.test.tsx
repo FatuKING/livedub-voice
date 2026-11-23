@@ -155,7 +155,7 @@ describe("translateError", () => {
 
 describe("I18nProvider", () => {
   const settings: Settings = {
-    version: 4,
+    version: 5,
     uiLanguage: "system",
     incoming: {
       enabled: false,
@@ -174,6 +174,7 @@ describe("I18nProvider", () => {
     voiceActivity: { pauseWhenSilent: true, autoOffMinutes: 5 },
     closeQuitsApp: false,
     trayNoticeShown: false,
+    onboardingCompleted: true,
   };
 
   beforeEach(() => {

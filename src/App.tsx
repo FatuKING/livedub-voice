@@ -7,6 +7,8 @@ import { useT } from "./i18n/context";
 import { failureText, type Failure } from "./i18n/errors";
 import type { MessageKey } from "./i18n/types";
 import { getAppInfo, type AppInfo } from "./lib/api";
+import type { OnboardingMode } from "./lib/onboarding";
+import Onboarding from "./onboarding/Onboarding";
 import HomeScreen from "./screens/HomeScreen";
 import SettingsScreen from "./screens/SettingsScreen";
 import UsageScreen from "./screens/UsageScreen";
@@ -20,8 +22,16 @@ const NAV_ITEMS: { screen: Screen; label: MessageKey; icon: LucideIcon }[] = [
   { screen: "usage", label: "app.nav.usage", icon: ChartColumn },
 ];
 
-function App() {
+export interface AppProps {
+  /** The first-run setup to show at launch (see `loadStartup`); none by default. */
+  onboarding?: OnboardingMode | null;
+}
+
+function App({ onboarding: initialOnboarding = null }: AppProps) {
   const t = useT();
+  const [onboarding, setOnboarding] = useState<OnboardingMode | null>(
+    initialOnboarding,
+  );
   const [info, setInfo] = useState<AppInfo | null>(null);
   const [error, setError] = useState<Failure | null>(null);
   const [screen, setScreen] = useState<Screen>("home");
@@ -37,13 +47,29 @@ function App() {
 
   // After the user navigates, move focus to the new screen's title so it is announced.
   useEffect(() => {
-    if (!navigated.current) return;
+    if (!navigated.current || onboarding) return;
     contentRef.current?.querySelector<HTMLElement>("h1")?.focus();
-  }, [screen]);
+  }, [screen, onboarding]);
 
   function navigate(next: Screen) {
     navigated.current = true;
     setScreen(next);
+  }
+
+  /** The setup is over: land on Home. */
+  function finishOnboarding() {
+    navigated.current = true;
+    setScreen("home");
+    setOnboarding(null);
+  }
+
+  if (onboarding) {
+    return (
+      <>
+        <Onboarding mode={onboarding} onDone={finishOnboarding} />
+        <CloseToTrayDialog />
+      </>
+    );
   }
 
   return (
@@ -90,7 +116,9 @@ function App() {
               onOpenUsage={() => navigate("usage")}
             />
           )}
-          {screen === "settings" && <SettingsScreen />}
+          {screen === "settings" && (
+            <SettingsScreen onRunSetup={() => setOnboarding("full")} />
+          )}
           {screen === "usage" && <UsageScreen />}
         </div>
       </main>

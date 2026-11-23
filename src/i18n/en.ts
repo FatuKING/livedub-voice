@@ -99,6 +99,8 @@ export const en = {
     defaultMicrophone: "Default microphone",
     notSet: "Not set",
     openSettings: "Open settings",
+    howToUse: "How to use",
+    hideGuide: "Hide guide",
     /** The voice indicator of a running direction. */
     voice: {
       label: "Voice",
@@ -204,6 +206,158 @@ export const en = {
       quitHint:
         "Stops both translations, gives the apps their volume back and closes the app.",
       quitError: "Could not quit: {error}",
+    },
+    setup: {
+      eyebrow: "Setup",
+      title: "First-run setup",
+      ariaLabel: "First-run setup",
+      text: "Go through the welcome steps again: app language, API key, headphones, virtual cable, privacy and the quick guide.",
+      runAgain: "Run setup again",
+    },
+  },
+
+  /** The first-run setup. */
+  onboarding: {
+    stepsLabel: "Setup steps",
+    done: "done",
+    stepOf: "Step {step} of {total}",
+    back: "Back",
+    next: "Next",
+    finish: "Start using LiveDub Voice",
+    skip: "Skip setup",
+    skipHint: "Every step can be done later in Settings.",
+    steps: {
+      welcome: "Welcome",
+      apiKey: "OpenAI API key",
+      headphones: "Headphones",
+      cable: "Virtual cable",
+      privacy: "Privacy",
+      guide: "Quick guide",
+    },
+    welcome: {
+      title: "Welcome to LiveDub Voice",
+      description:
+        "A live interpreter for your calls and games. A few short steps get you ready; skip any of them and come back to it in Settings.",
+      incomingText:
+        "You hear the people in your call or game in your language, on your headphones.",
+      outgoingText:
+        "They hear you in theirs, through a virtual microphone. Nothing to install on their side.",
+    },
+    apiKey: {
+      title: "Connect your OpenAI account",
+      description:
+        "LiveDub Voice translates with OpenAI's gpt-realtime-translate model, using your own API key. OpenAI bills your account directly.",
+      howEyebrow: "Get a key",
+      howTitle: "Create an API key",
+      howStep1:
+        "Sign in at platform.openai.com and add a payment method under Billing.",
+      howStep2: "Create a key under API keys and copy it.",
+      howStep3:
+        "Paste it below. It is stored in Windows Credential Manager and only sent to OpenAI.",
+      openKeys: "Open platform.openai.com/api-keys",
+      costEyebrow: "Cost",
+      costTitle: "What it costs",
+      cost: "{price} per audio minute for each direction that is on: about {hourly} per hour with one direction, twice that with both.",
+      budget:
+        "Set a monthly budget in OpenAI's dashboard: it is the real safety net. You can also set LiveDub Voice's own spending cap on the Usage screen.",
+      openBudget: "Set a budget in OpenAI",
+      openError: "Could not open the browser: {error}",
+    },
+    headphones: {
+      title: "Wear headphones",
+      description:
+        "With speakers, your microphone picks up the translation of the others and sends it back into the call: they hear an echo of themselves.",
+      cardEyebrow: "Recommended",
+      cardTitle: "Headphones or a headset",
+      point1:
+        "The incoming translation plays on your headphones. Choose them in Settings → Incoming → Headphones (the default output is used until then).",
+      point2:
+        "Any wired or wireless headphones work. A headset with a microphone is ideal.",
+    },
+    cable: {
+      title: "Set up a virtual microphone",
+      description:
+        "Windows has no virtual microphone of its own. LiveDub Voice plays your translated voice into a virtual audio cable, and your call or game uses the cable as its microphone.",
+      eyebrow: "Outgoing",
+      searching: "Looking for a virtual cable…",
+      listError: "Could not list audio devices: {error}",
+      foundTitle: "Virtual cable found",
+      ready: "Ready",
+      foundText:
+        "LiveDub Voice sends your translated voice to {name}. In your call or game, choose the cable's recording side (CABLE Output for VB-CABLE) as the microphone.",
+      chooseLabel: "Send your translation to",
+      chosen: "Chosen as the outgoing output. You can change it in Settings.",
+      saveError: "Could not choose the cable: {error}",
+      missingTitle: "No virtual cable found",
+      missing: "Not installed",
+      missingText:
+        "Install VB-CABLE, a free virtual cable: download it, unzip it, run VBCABLE_Setup_x64.exe as administrator and restart Windows if it asks. Then check again. VoiceMeeter and Virtual-Audio-Driver work too.",
+      download: "Get VB-CABLE",
+      checkAgain: "Check again",
+      checking: "Checking…",
+      incomingOnly:
+        "Only want to hear others translated? Skip this step: the incoming translation does not need a cable.",
+      openError: "Could not open the browser: {error}",
+    },
+    privacy: {
+      title: "Privacy and consent",
+      description: "What LiveDub Voice sends, and to whom.",
+      lightIntro:
+        "Your setup is already done. Before you go on, two things worth knowing: what LiveDub Voice sends, and how to use it in your apps.",
+      othersTitle: "Tell others you use a translator",
+      others:
+        "The incoming translation sends the voices of the people you talk with to OpenAI. Let them know you use a live translator, and follow the rules of the call, server or game.",
+      openaiTitle: "Audio goes only to OpenAI",
+      openai:
+        "Audio is streamed to OpenAI under your API key and OpenAI's terms, and to nobody else. LiveDub Voice keeps no recordings.",
+      telemetryTitle: "No telemetry",
+      telemetry:
+        "LiveDub Voice collects no usage data or crash reports. Minutes and costs are counted on this computer only.",
+    },
+  },
+
+  /** How to use LiveDub Voice: the onboarding's last step, and the "How to use" panel on Home. */
+  guide: {
+    title: "How to use LiveDub Voice",
+    description:
+      "Start each direction from Home, and pick the virtual cable as the microphone in your call or game.",
+    incoming: {
+      eyebrow: "Incoming · others → you",
+      title: "Hear others in your language",
+      step1:
+        "In Settings → Incoming, choose the app to translate (Discord, your browser, Teams, a game) or the whole system, and your headphones.",
+      step2: "On Home, press Start incoming.",
+      step3:
+        "The original audio gets quieter and the translation plays over it, a couple of seconds behind.",
+    },
+    outgoing: {
+      eyebrow: "Outgoing · you → others",
+      title: "Others hear you in their language",
+      step1:
+        "In your call or game, choose CABLE Output as the microphone (see the table below).",
+      step2: "On Home, press Start outgoing and speak normally.",
+      step3: "Others hear the translation a couple of seconds after you speak.",
+    },
+    mic: {
+      eyebrow: "Microphone",
+      title: "Which microphone to pick",
+      intro:
+        "Pick CABLE Output (VB-Audio Virtual Cable), or the recording side of your cable, not your real microphone: LiveDub Voice already listens to it.",
+      caption: "Where to choose the microphone in each app",
+      app: "App",
+      where: "Where",
+      discord: "Discord",
+      discordWhere: "User Settings → Voice & Video → Input Device",
+      meet: "Google Meet",
+      meetWhere: "Settings (gear icon) → Audio → Microphone",
+      teams: "Microsoft Teams",
+      teamsWhere: "Settings → Devices → Microphone",
+      whatsapp: "WhatsApp Web",
+      whatsappWhere:
+        "Uses the browser's microphone: choose it from the camera/microphone icon in the address bar, or in the browser's site settings",
+      games: "Games",
+      gamesWhere:
+        "Voice chat settings → Input device. If there is none, make CABLE Output the default recording device in Windows Sound settings",
     },
   },
 

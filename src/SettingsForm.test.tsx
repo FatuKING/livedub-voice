@@ -12,7 +12,7 @@ vi.mock("@tauri-apps/api/core", () => ({
 const invokeMock = vi.mocked(invoke);
 
 const defaults: Settings = {
-  version: 4,
+  version: 5,
   uiLanguage: "system",
   incoming: {
     enabled: false,
@@ -31,6 +31,7 @@ const defaults: Settings = {
   voiceActivity: { pauseWhenSilent: true, autoOffMinutes: 5 },
   closeQuitsApp: false,
   trayNoticeShown: false,
+  onboardingCompleted: true,
 };
 
 const speakers: AudioDevice = {
@@ -206,7 +207,7 @@ describe("SettingsForm", () => {
     );
     expect(invokeMock).toHaveBeenCalledWith("save_settings", {
       settings: {
-        version: 4,
+        version: 5,
         // The form saves the language the panel is showing (English here).
         uiLanguage: "en",
         incoming: {
@@ -226,6 +227,7 @@ describe("SettingsForm", () => {
         voiceActivity: { pauseWhenSilent: true, autoOffMinutes: 5 },
         closeQuitsApp: false,
         trayNoticeShown: false,
+        onboardingCompleted: true,
       },
     });
   });
