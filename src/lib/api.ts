@@ -123,6 +123,11 @@ export interface Settings {
   closeQuitsApp: boolean;
   /** The one-off tray notice was shown. Owned by the core: saving never turns it back off. */
   trayNoticeShown: boolean;
+  /**
+   * The first-run setup was finished or skipped. Owned by the core: saving never changes it;
+   * {@link completeOnboarding} sets it.
+   */
+  onboardingCompleted: boolean;
 }
 
 /** Fetches the current settings from the core. */
@@ -601,6 +606,11 @@ export function setTrayLabels(labels: TrayLabels): Promise<void> {
 /** Hides the window to the tray (translations keep running) and remembers the notice was shown. */
 export function hideToTray(): Promise<void> {
   return invoke<void>("hide_to_tray");
+}
+
+/** Remembers that the first-run setup was finished or skipped, resolving with the saved settings. */
+export function completeOnboarding(): Promise<Settings> {
+  return invoke<Settings>("complete_onboarding");
 }
 
 /** Quits LiveDub Voice: both translations stop gracefully and the app exits. */

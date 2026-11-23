@@ -121,6 +121,7 @@ pub fn run() {
             commands::override_spending_cap,
             commands::set_tray_labels,
             commands::hide_to_tray,
+            commands::complete_onboarding,
             commands::quit_app
         ])
         .build(tauri::generate_context!());

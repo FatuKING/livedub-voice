@@ -1,4 +1,5 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { CircleHelp, X } from "lucide-react";
+import { useEffect, useId, useState, type ReactNode } from "react";
 import CapNotice from "../CapNotice";
 import Button from "../components/Button";
 import Card from "../components/Card";
@@ -18,6 +19,7 @@ import {
   type Settings,
 } from "../lib/api";
 import { languageName, type Direction } from "../lib/languages";
+import QuickGuide from "../QuickGuide";
 import TranslationControls from "../TranslationControls";
 import { useUsage } from "../useUsage";
 import "./screens.css";
@@ -122,6 +124,8 @@ function HomeScreen({ onOpenSettings, onOpenUsage }: HomeScreenProps) {
   const { usage, stoppedBy, setUsage } = useUsage();
   const [settings, setSettings] = useState<Settings | null>(null);
   const [error, setError] = useState<Failure | null>(null);
+  const [guideOpen, setGuideOpen] = useState(false);
+  const guideId = useId();
   const [readiness, setReadiness] = useState<Readiness>({
     hasKey: null,
     devices: null,
@@ -179,7 +183,35 @@ function HomeScreen({ onOpenSettings, onOpenUsage }: HomeScreenProps) {
 
   return (
     <>
-      <PageHeader title={t("home.title")} description={t("home.description")} />
+      <PageHeader
+        title={t("home.title")}
+        description={t("home.description")}
+        actions={
+          <Button
+            variant="secondary"
+            icon={
+              guideOpen ? (
+                <X size={16} aria-hidden="true" />
+              ) : (
+                <CircleHelp size={16} aria-hidden="true" />
+              )
+            }
+            aria-expanded={guideOpen}
+            aria-controls={guideId}
+            onClick={() => setGuideOpen((open) => !open)}
+          >
+            {guideOpen ? t("home.hideGuide") : t("home.howToUse")}
+          </Button>
+        }
+      />
+      <section
+        id={guideId}
+        className="ld-home-guide"
+        aria-label={t("guide.title")}
+        hidden={!guideOpen}
+      >
+        {guideOpen && <QuickGuide />}
+      </section>
       {error && <Notice tone="error">{failureText(error, t)}</Notice>}
       {usage && (
         <CapNotice

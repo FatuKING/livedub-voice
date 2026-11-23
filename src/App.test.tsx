@@ -1,4 +1,4 @@
-import { fireEvent, screen, within } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { invoke } from "@tauri-apps/api/core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
@@ -115,7 +115,7 @@ describe("App", () => {
     invokeMock.mockImplementation((command) => {
       if (command === "get_settings") {
         return Promise.resolve({
-          version: 4,
+          version: 5,
           uiLanguage: "system",
           incoming: {
             enabled: false,
@@ -134,6 +134,7 @@ describe("App", () => {
           voiceActivity: { pauseWhenSilent: true, autoOffMinutes: 5 },
           closeQuitsApp: false,
           trayNoticeShown: false,
+          onboardingCompleted: true,
         });
       }
       return new Promise(() => {});
@@ -155,5 +156,89 @@ describe("App", () => {
     expect(
       screen.getByRole("button", { name: "Start outgoing" }),
     ).toBeDisabled();
+  });
+  describe("first-run setup", () => {
+    it("shows the setup instead of the panel when asked at launch", () => {
+      mockAppInfo();
+
+      render(<App onboarding="full" />);
+
+      expect(
+        screen.getByRole("heading", {
+          level: 1,
+          name: "Welcome to LiveDub Voice",
+        }),
+      ).toBeInTheDocument();
+      expect(
+        screen.queryByRole("navigation", { name: "Main" }),
+      ).not.toBeInTheDocument();
+    });
+
+    it("lands on Home once the setup is skipped", async () => {
+      invokeMock.mockImplementation((command) => {
+        if (command === "app_info")
+          return Promise.resolve({ name: "LiveDub Voice", version: "1.2.3" });
+        if (command === "complete_onboarding") return Promise.resolve({});
+        return new Promise(() => {});
+      });
+      render(<App onboarding="full" />);
+
+      fireEvent.click(screen.getByRole("button", { name: "Skip setup" }));
+
+      const home = await screen.findByRole("heading", {
+        level: 1,
+        name: "Home",
+      });
+      await waitFor(() => expect(home).toHaveFocus());
+      expect(invokeMock).toHaveBeenCalledWith("complete_onboarding");
+      expect(navItem("Home")).toHaveAttribute("aria-current", "page");
+    });
+
+    it("runs the full setup again from Settings", () => {
+      mockAppInfo();
+      render(<App />);
+
+      fireEvent.click(navItem("Settings"));
+      fireEvent.click(
+        within(
+          screen.getByRole("region", { name: "First-run setup" }),
+        ).getByRole("button", { name: "Run setup again" }),
+      );
+
+      expect(
+        screen.getByRole("heading", {
+          level: 1,
+          name: "Welcome to LiveDub Voice",
+        }),
+      ).toBeInTheDocument();
+      expect(screen.getByText("Step 1 of 6")).toBeInTheDocument();
+    });
+
+    it("opens the quick guide from Home", () => {
+      mockAppInfo();
+      render(<App />);
+
+      const toggle = screen.getByRole("button", { name: "How to use" });
+      expect(toggle).toHaveAttribute("aria-expanded", "false");
+      expect(
+        screen.queryByRole("region", { name: "How to use LiveDub Voice" }),
+      ).not.toBeInTheDocument();
+
+      fireEvent.click(toggle);
+
+      const guide = screen.getByRole("region", {
+        name: "How to use LiveDub Voice",
+      });
+      expect(
+        within(guide).getByRole("row", { name: /Google Meet/ }),
+      ).toBeInTheDocument();
+      const hide = screen.getByRole("button", { name: "Hide guide" });
+      expect(hide).toHaveAttribute("aria-expanded", "true");
+
+      fireEvent.click(hide);
+      expect(
+        screen.queryByRole("region", { name: "How to use LiveDub Voice" }),
+      ).not.toBeInTheDocument();
+    });
   });
 });

@@ -1,7 +1,7 @@
 //! User settings.
 //!
 //! The settings (panel language, language direction, devices, source app, ducking volume,
-//! spending cap, voice detection, closing to the tray) are stored as a JSON file (`settings.json`) in Tauri's app config dir
+//! spending cap, voice detection, closing to the tray, first-run setup) are stored as a JSON file (`settings.json`) in Tauri's app config dir
 //! (`%APPDATA%\io.github.fatuking.livedubvoice`). The OpenAI API key is never part of this file:
 //! it lives only in Windows Credential Manager.
 //!
@@ -22,8 +22,8 @@ use crate::persist::{with_suffix, write_atomic};
 /// step from the previous version to [`migrate`].
 ///
 /// History: 1 = initial format; 2 = adds `uiLanguage`; 3 = adds `spendingCap`; 4 = adds
-/// `voiceActivity`, `closeQuitsApp` and `trayNoticeShown`.
-pub const SETTINGS_VERSION: u32 = 4;
+/// `voiceActivity`, `closeQuitsApp` and `trayNoticeShown`; 5 = adds `onboardingCompleted`.
+pub const SETTINGS_VERSION: u32 = 5;
 
 /// Name of the settings file inside the app config dir.
 pub const SETTINGS_FILE_NAME: &str = "settings.json";
@@ -244,6 +244,9 @@ pub struct Settings {
     /// The one-off notice that closing hides to the tray was shown. Owned by the core: a save
     /// from the panel never turns it back off.
     pub tray_notice_shown: bool,
+    /// The first-run setup (onboarding) was finished or skipped. Owned by the core: a save from
+    /// the panel never changes it; only `complete_onboarding` sets it.
+    pub onboarding_completed: bool,
 }
 
 impl Default for Settings {
@@ -257,6 +260,7 @@ impl Default for Settings {
             voice_activity: VoiceActivitySettings::default(),
             close_quits_app: false,
             tray_notice_shown: false,
+            onboarding_completed: false,
         }
     }
 }
@@ -367,6 +371,14 @@ pub fn migrate(value: &mut serde_json::Value) -> Result<(), String> {
             .entry("trayNoticeShown")
             .or_insert_with(|| serde_json::json!(false));
         version = 4;
+    }
+    if version == 4 {
+        // 4 → 5: the first-run setup, not done yet. The panel shows existing users who already
+        // have an API key a shorter version (privacy and the quick guide only).
+        object
+            .entry("onboardingCompleted")
+            .or_insert_with(|| serde_json::json!(false));
+        version = 5;
     }
 
     object.insert("version".into(), version.into());
@@ -497,12 +509,15 @@ impl SettingsStore {
     }
 
     /// Saves settings coming from the panel: like [`save`](Self::save), but fields the core
-    /// owns keep their current value (the panel may hold a copy older than them).
+    /// owns (`trayNoticeShown`, `onboardingCompleted`) keep their current value (the panel may
+    /// hold a copy older than them).
     pub fn save_from_panel(&self, settings: Settings) -> AppResult<Settings> {
         self.update(|current| {
             let tray_notice_shown = current.tray_notice_shown;
+            let onboarding_completed = current.onboarding_completed;
             *current = settings;
             current.tray_notice_shown = tray_notice_shown;
+            current.onboarding_completed = onboarding_completed;
         })
     }
 
@@ -545,7 +560,7 @@ mod tests {
         assert_eq!(
             serde_json::to_value(Settings::default()).unwrap(),
             json!({
-                "version": 4,
+                "version": 5,
                 "uiLanguage": "system",
                 "incoming": {
                     "enabled": false,
@@ -563,7 +578,8 @@ mod tests {
                 "spendingCap": { "dailyUsd": null, "monthlyUsd": null },
                 "voiceActivity": { "pauseWhenSilent": true, "autoOffMinutes": 5 },
                 "closeQuitsApp": false,
-                "trayNoticeShown": false
+                "trayNoticeShown": false,
+                "onboardingCompleted": false
             })
         );
     }
@@ -688,12 +704,13 @@ mod tests {
         assert_eq!(
             value,
             json!({
-                "version": 4,
+                "version": 5,
                 "uiLanguage": "es",
                 "spendingCap": { "dailyUsd": null, "monthlyUsd": null },
                 "voiceActivity": { "pauseWhenSilent": true, "autoOffMinutes": 5 },
                 "closeQuitsApp": false,
-                "trayNoticeShown": false
+                "trayNoticeShown": false,
+                "onboardingCompleted": false
             })
         );
     }
@@ -770,14 +787,15 @@ mod tests {
 
         assert_eq!(settings.incoming.target_language, Language::English);
         assert_eq!(settings.outgoing.target_language, Language::Spanish);
-        // Everything is kept; only the version, the (off) spending cap and the voice and tray
-        // settings are new.
+        // Everything is kept; only the version, the (off) spending cap, the voice and tray
+        // settings and the onboarding flag are new.
         let mut expected = file;
-        expected["version"] = json!(4);
+        expected["version"] = json!(5);
         expected["spendingCap"] = json!({ "dailyUsd": null, "monthlyUsd": null });
         expected["voiceActivity"] = json!({ "pauseWhenSilent": true, "autoOffMinutes": 5 });
         expected["closeQuitsApp"] = json!(false);
         expected["trayNoticeShown"] = json!(false);
+        expected["onboardingCompleted"] = json!(false);
         assert_eq!(serde_json::to_value(&settings).unwrap(), expected);
         assert!(!backup_path(&path).exists());
     }
@@ -813,7 +831,7 @@ mod tests {
 
         let settings = load(&path);
 
-        assert_eq!(settings.version, 4);
+        assert_eq!(settings.version, SETTINGS_VERSION);
         assert_eq!(settings.ui_language, UiLanguage::English);
         assert_eq!(settings.spending_cap.daily_usd, Some(2.5));
         assert_eq!(
@@ -838,7 +856,7 @@ mod tests {
 
         migrate(&mut value).unwrap();
 
-        assert_eq!(value["version"], json!(4));
+        assert_eq!(value["version"], json!(5));
         assert_eq!(
             value["voiceActivity"],
             json!({ "pauseWhenSilent": false, "autoOffMinutes": null })
@@ -900,6 +918,102 @@ mod tests {
         assert!(saved.tray_notice_shown);
         assert!(saved.close_quits_app);
         assert_eq!(load(store.path()), saved);
+    }
+
+    #[test]
+    fn version_4_file_migrates_with_onboarding_not_completed() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(SETTINGS_FILE_NAME);
+        let file = json!({
+            "version": 4,
+            "uiLanguage": "es",
+            "incoming": {
+                "enabled": false,
+                "targetLanguage": "en",
+                "sourceApp": { "kind": "process", "name": "Discord.exe" },
+                "outputDeviceId": null,
+                "originalVolume": 35
+            },
+            "outgoing": {
+                "enabled": false,
+                "targetLanguage": "ja",
+                "inputDeviceId": null,
+                "outputDeviceId": "cable-input"
+            },
+            "spendingCap": { "dailyUsd": 3.0, "monthlyUsd": null },
+            "voiceActivity": { "pauseWhenSilent": false, "autoOffMinutes": 10 },
+            "closeQuitsApp": true,
+            "trayNoticeShown": true
+        });
+        fs::write(&path, file.to_string()).unwrap();
+
+        let settings = load(&path);
+
+        // Everything is kept; only the version and the (not yet completed) onboarding change.
+        let mut expected = file;
+        expected["version"] = json!(5);
+        expected["onboardingCompleted"] = json!(false);
+        assert_eq!(serde_json::to_value(&settings).unwrap(), expected);
+        assert!(!backup_path(&path).exists());
+    }
+
+    #[test]
+    fn version_1_file_migrates_all_the_way_with_onboarding_not_completed() {
+        let mut value = json!({ "version": 1 });
+
+        migrate(&mut value).unwrap();
+
+        assert_eq!(value["version"], json!(SETTINGS_VERSION));
+        assert_eq!(value["onboardingCompleted"], json!(false));
+    }
+
+    #[test]
+    fn migrate_keeps_an_onboarding_flag_already_present() {
+        let mut value = json!({ "version": 4, "onboardingCompleted": true });
+
+        migrate(&mut value).unwrap();
+
+        assert_eq!(value["version"], json!(5));
+        assert_eq!(value["onboardingCompleted"], json!(true));
+    }
+
+    #[test]
+    fn onboarding_flag_round_trips() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(SETTINGS_FILE_NAME);
+        let settings = Settings {
+            onboarding_completed: true,
+            ..Settings::default()
+        };
+
+        save(&path, &settings).unwrap();
+
+        assert_eq!(load(&path), settings);
+    }
+
+    #[test]
+    fn a_panel_save_keeps_the_onboarding_flag() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = SettingsStore::load(dir.path().join(SETTINGS_FILE_NAME));
+        let panel_copy = store.get().unwrap();
+        store
+            .update(|settings| settings.onboarding_completed = true)
+            .unwrap();
+
+        // An older copy (flag off) does not undo it...
+        let saved = store.save_from_panel(panel_copy.clone()).unwrap();
+        assert!(saved.onboarding_completed);
+
+        // ...and a copy with it on does not set it.
+        let other = tempfile::tempdir().unwrap();
+        let fresh = SettingsStore::load(other.path().join(SETTINGS_FILE_NAME));
+        let saved = fresh
+            .save_from_panel(Settings {
+                onboarding_completed: true,
+                ..panel_copy
+            })
+            .unwrap();
+        assert!(!saved.onboarding_completed);
     }
 
     #[test]

@@ -68,8 +68,8 @@ pub fn get_settings(store: State<'_, SettingsStore>) -> AppResult<Settings> {
     store.get()
 }
 
-/// Validates and saves the settings, returning what was saved. `trayNoticeShown` keeps the
-/// core's value (see [`SettingsStore::save_from_panel`]).
+/// Validates and saves the settings, returning what was saved. `trayNoticeShown` and
+/// `onboardingCompleted` keep the core's value (see [`SettingsStore::save_from_panel`]).
 ///
 /// A running incoming translation applies the new original-audio volume at once, and the
 /// spending cap applies at once (a `usage-updated` event follows); every other change applies
@@ -499,6 +499,13 @@ pub fn hide_to_tray(app: AppHandle, store: State<'_, SettingsStore>) -> AppResul
     store.update(|settings| settings.tray_notice_shown = true)?;
     tray::hide_window(&app);
     Ok(())
+}
+
+/// Remembers that the first-run setup was finished or skipped, so it is not shown again.
+/// Returns the saved settings.
+#[tauri::command]
+pub fn complete_onboarding(store: State<'_, SettingsStore>) -> AppResult<Settings> {
+    store.update(|settings| settings.onboarding_completed = true)
 }
 
 /// Quits LiveDub Voice: both translations stop (gracefully, see [`shut_down_pipelines`]) and
