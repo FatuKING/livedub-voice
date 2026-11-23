@@ -35,12 +35,13 @@ Useful commands:
 | `cargo test` (in `src-tauri/`)  | Run the Rust tests             |
 | `pnpm tauri build`              | Build the Windows installer    |
 | `pnpm icons`                    | Regenerate the app icons       |
+| `pnpm version:bump X.Y.Z`       | Set the version everywhere     |
 
 ### Icons and installer
 
 The app icon is drawn in two SVG masters in `src-tauri/icons/`: `icon.svg` (32 px and up) and `icon-small.svg`, the same drawing without the voice bars for the 16, 20 and 24 px sizes (system tray, title bar). Every other file in that folder — the PNGs, `icon.ico`, `icon.icns` and the installer's `nsis-header.bmp` / `nsis-sidebar.bmp` — is generated: edit a master, run `pnpm icons` and commit the results. The panel's `LogoMark` component draws the same mark, so update it too.
 
-`pnpm tauri build` builds the NSIS installer (`src-tauri/target/release/bundle/nsis/LiveDub Voice_<version>_x64-setup.exe`). Its options live under `bundle` in `src-tauri/tauri.conf.json`, and `src-tauri/installer/hooks.nsh` holds the custom install/uninstall steps. Before a release, install it on a clean user, check the icon in the Start menu, taskbar and tray, then uninstall it with and without "Delete the application data".
+`pnpm tauri build` builds the NSIS installer (`src-tauri/target/release/bundle/nsis/LiveDub Voice_<version>_x64-setup.exe`). Its options live under `bundle` in `src-tauri/tauri.conf.json`, and `src-tauri/installer/hooks.nsh` holds the custom install/uninstall steps. Before a release, install it on a clean user, check the icon in the Start menu, taskbar and tray, then uninstall it with and without "Delete the application data". How releases are cut and published is in [docs/releasing.md](docs/releasing.md).
 
 ### Running without an OpenAI key
 
