@@ -141,6 +141,7 @@ jobs:
           sed -e "s|{{VERSION}}|$VERSION|g" -e "s|{{TAG}}|$TAG|g" -e "s|{{REPOSITORY}}|$REPOSITORY|g" \
             .github/release-notes.md > out/release-notes.md
           {
+            echo
             echo '```text'
             cat out/assets/SHA256SUMS.txt
             echo '```'
