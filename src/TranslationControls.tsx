@@ -1,4 +1,4 @@
-import { Play, Square } from "lucide-react";
+import { Mic, MicOff, Play, Square } from "lucide-react";
 import { useEffect, useId, useState } from "react";
 import Button from "./components/Button";
 import LevelMeter from "./components/LevelMeter";
@@ -9,6 +9,7 @@ import { useT } from "./i18n/context";
 import { translateError } from "./i18n/errors";
 import {
   isAppError,
+  onPushToTalk,
   overrideSpendingCap,
   type InputLevel,
   type PipelineState,
@@ -49,6 +50,11 @@ export interface TranslationControlsProps {
   onOpenSettings: () => void;
   /** Opens the Usage screen (where the spending cap is raised). */
   onOpenUsage?: () => void;
+  /**
+   * Push-to-talk mode (outgoing): the key as the user reads it ("F8"). `undefined` = voice
+   * detection.
+   */
+  pushToTalkKey?: string;
 }
 
 /**
@@ -62,6 +68,7 @@ function TranslationControls({
   help,
   onOpenSettings,
   onOpenUsage,
+  pushToTalkKey,
 }: TranslationControlsProps) {
   const t = useT();
   const noteId = useId();
@@ -75,7 +82,22 @@ function TranslationControls({
   const [busy, setBusy] = useState(false);
   /** Start was refused because the spending cap is reached: ask before going on. */
   const [capBlocked, setCapBlocked] = useState(false);
+  /** The push-to-talk key is held. */
+  const [talking, setTalking] = useState(false);
   const pipeline = PIPELINES[direction];
+  const pushToTalk = pushToTalkKey !== undefined;
+
+  useEffect(() => {
+    if (!pushToTalk) return;
+    let current = true;
+    const subscription = onPushToTalk((held) => {
+      if (current) setTalking(held);
+    });
+    return () => {
+      current = false;
+      subscription.then((unlisten) => unlisten()).catch(() => undefined);
+    };
+  }, [pushToTalk]);
 
   useEffect(() => {
     let current = true;
@@ -161,6 +183,8 @@ function TranslationControls({
   }
 
   const startBlocked = !running && blocked !== null;
+  /** Push-to-talk: the key is held and the audio goes out. */
+  const talkingLive = talking && status.state === "live";
 
   return (
     <div className="ld-translation">
@@ -245,6 +269,34 @@ function TranslationControls({
         </Notice>
       )}
 
+      {pushToTalk && (
+        <p
+          className={[
+            "ld-translation__ptt",
+            talkingLive && "ld-translation__ptt--talking",
+          ]
+            .filter(Boolean)
+            .join(" ")}
+          aria-live="polite"
+        >
+          {talkingLive ? (
+            <Mic size={16} aria-hidden="true" />
+          ) : (
+            <MicOff size={16} aria-hidden="true" />
+          )}
+          <span>
+            {talkingLive
+              ? t("home.outgoing.pushToTalk.talking")
+              : t("home.outgoing.pushToTalk.hold", { key: pushToTalkKey })}
+          </span>
+        </p>
+      )}
+      {pushToTalk && talking && !running && (
+        <Notice tone="info">
+          {t("home.outgoing.pushToTalk.startFirst", { key: pushToTalkKey })}
+        </Notice>
+      )}
+
       <LevelMeter
         direction={direction}
         label={t(`home.${direction}.level`)}
@@ -262,7 +314,9 @@ function TranslationControls({
           hint={
             voice.sending
               ? t("home.voice.sendingHint")
-              : t("home.voice.pausedHint")
+              : pushToTalk
+                ? t("home.voice.keyUpHint")
+                : t("home.voice.pausedHint")
           }
         />
       )}

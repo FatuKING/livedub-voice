@@ -6,14 +6,19 @@
 
 use super::reconnect::ReconnectPolicy;
 use super::translation::{Direction, InputSource, PipelineConfig};
-use super::voice::VoiceConfig;
+use super::voice::{TalkKey, VoiceConfig};
 use crate::audio::{AudioDevice, DeviceKind};
 use crate::error::{AppError, AppResult};
-use crate::settings::{OutgoingSettings, VoiceActivitySettings};
+use crate::settings::{OutgoingSettings, TalkMode, VoiceActivitySettings};
 
 /// The outgoing pipeline's configuration from the saved settings (its own, and the voice
-/// detection shared by both directions).
-pub fn config(settings: &OutgoingSettings, voice: &VoiceActivitySettings) -> PipelineConfig {
+/// detection shared by both directions). In push-to-talk mode the gate follows `talk_key`.
+pub fn config(
+    settings: &OutgoingSettings,
+    voice: &VoiceActivitySettings,
+    talk_key: &TalkKey,
+) -> PipelineConfig {
+    let push_to_talk = settings.talk_mode == TalkMode::PushToTalk;
     PipelineConfig {
         direction: Direction::Outgoing,
         input: InputSource::Device(settings.input_device_id.clone()),
@@ -21,7 +26,11 @@ pub fn config(settings: &OutgoingSettings, voice: &VoiceActivitySettings) -> Pip
         target_language: settings.target_language,
         original_volume: None,
         reconnect: ReconnectPolicy::default(),
-        voice: VoiceConfig::from_settings(voice),
+        voice: VoiceConfig {
+            push_to_talk,
+            ..VoiceConfig::from_settings(voice)
+        },
+        talk_key: push_to_talk.then(|| talk_key.clone()),
     }
 }
 
@@ -117,7 +126,8 @@ mod tests {
                 &VoiceActivitySettings {
                     pause_when_silent: true,
                     auto_off_minutes: None,
-                }
+                },
+                &TalkKey::default(),
             ),
             PipelineConfig {
                 direction: Direction::Outgoing,
@@ -127,6 +137,7 @@ mod tests {
                 original_volume: None,
                 reconnect: ReconnectPolicy::default(),
                 voice: VoiceConfig::default(),
+                talk_key: None,
             }
         );
     }

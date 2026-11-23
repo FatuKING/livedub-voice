@@ -76,6 +76,12 @@ export const es: Messages = {
       },
       reconnecting:
         "Se perdió la conexión con OpenAI. Reconectando… Mientras tanto, los demás no escuchan nada de tu voz.",
+      pushToTalk: {
+        hold: "Mantener {key} para hablar",
+        talking: "Hablando: los demás te escuchan",
+        startFirst:
+          "Para hablar con {key}, primero hay que iniciar la traducción saliente.",
+      },
     },
     goToSettings: "Ir a Configuración",
     status: {
@@ -93,6 +99,7 @@ export const es: Messages = {
     wholeSystem: "Todo el sistema",
     defaultDevice: "Dispositivo predeterminado",
     defaultMicrophone: "Micrófono predeterminado",
+    shortcut: "Atajo",
     notSet: "Sin elegir",
     openSettings: "Abrir configuración",
     howToUse: "Cómo usar",
@@ -102,6 +109,8 @@ export const es: Messages = {
       speaking: "Hablando",
       listening: "Escuchando",
       pausedHint: "Nadie habla: no se envía audio a OpenAI.",
+      keyUpHint:
+        "La tecla para hablar está suelta: no se envía audio a OpenAI.",
       sendingHint: "Se está enviando audio a OpenAI.",
     },
   },
@@ -170,6 +179,21 @@ export const es: Messages = {
         "No se encontró ningún cable virtual. Hace falta instalar uno, como VB-CABLE, y después actualizar los dispositivos.",
       appliesNextStart:
         "La traducción saliente está activa. Los cambios se aplican la próxima vez que se inicie.",
+      talkMode: "Enviar tu voz",
+      talkModes: {
+        voiceDetection: "Al hablar",
+        pushToTalk: "Pulsar para hablar",
+      },
+      talkModeHints: {
+        voiceDetection:
+          "La detección de voz decide cuándo se habla (ver Detección de voz).",
+        pushToTalk:
+          "Solo mientras se mantiene la tecla, más un segundo después de soltarla para que la frase se termine. La traducción saliente tiene que estar encendida: apagada, la tecla no hace nada.",
+      },
+      pushToTalkKeyHint:
+        "Se mantiene mientras se habla. Con pulsar para hablar activo, Windows le quita esta tecla a las demás apps: conviene una que tu juego no use.",
+      pushToTalkKeyMissing:
+        "Falta elegir una tecla para usar pulsar para hablar.",
     },
     voice: {
       eyebrow: "Ambas direcciones",
@@ -188,6 +212,40 @@ export const es: Messages = {
       },
       appliesNextStart:
         "Hay una traducción activa. Los cambios se aplican la próxima vez que se inicie.",
+    },
+    hotkeys: {
+      eyebrow: "Teclado",
+      title: "Atajos de teclado",
+      ariaLabel: "Atajos de teclado",
+      intro:
+        "Funcionan aunque un juego o una llamada tenga el foco y LiveDub Voice esté oculto en la bandeja. Los cambios se aplican al guardar.",
+      actions: {
+        toggleIncoming: "Encender o apagar la entrante",
+        toggleOutgoing: "Encender o apagar la saliente",
+        toggleBoth: "Encender o apagar ambas",
+        pushToTalk: "Tecla para hablar",
+      },
+      none: "Ninguno",
+      recording: "Presionar las teclas… (Esc para cancelar)",
+      change: "Cambiar",
+      clear: "Quitar el atajo",
+      resetDefaults: "Volver a los predeterminados",
+      keysHint:
+        "Mientras LiveDub Voice está abierto, Windows le quita estas teclas a todas las apps. Letras, números y otras teclas de escritura necesitan Ctrl, Alt o Win; las teclas de función (F1–F24), Pausa, Bloq Despl e Insert también sirven solas. No se puede usar un modificador solo ni un botón del mouse: en su lugar, asignar el botón a F13–F24 desde el software del mouse.",
+      soundCues: "Sonidos de aviso",
+      soundCuesHint:
+        "Un sonido corto y suave en tus auriculares cuando un atajo enciende (sube) o apaga (baja) una traducción.",
+      problems: {
+        needsModifier:
+          "{shortcut} necesita Ctrl, Alt o Win: sola, esa tecla dejaría de escribirse en todas las apps.",
+        unsupportedKey:
+          "{shortcut} no puede ser un atajo. Sirve una letra, un número o una tecla de función con Ctrl, Alt o Win.",
+        conflict: "{shortcut} ya se usa para “{action}”.",
+        unavailable:
+          "{shortcut} no funciona: otra app lo usa o Windows lo reserva. Hay que elegir otro.",
+        typesCharacter:
+          "{shortcut} escribe un carácter con tu distribución de teclado (AltGr), así que no se usa. Hay que elegir otro.",
+      },
     },
     window: {
       eyebrow: "Ventana",
@@ -581,5 +639,9 @@ export const es: Messages = {
       "La app elegida en Configuración no está abierta ({detail}). Abrirla o traducir todo el sistema.",
     spending_cap_reached:
       "Se alcanzó tu límite de gasto ({detail}). Se puede subir en la pantalla Uso, o seguir por hoy.",
+    hotkey_unavailable:
+      "Windows rechazó el atajo {detail}: puede que otra app lo use. Hay que elegir otro.",
+    hotkey_types_character:
+      "El atajo {detail} escribe un carácter con tu distribución de teclado (AltGr). Hay que elegir otro.",
   },
 };

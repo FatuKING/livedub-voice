@@ -80,6 +80,12 @@ export const en = {
       },
       reconnecting:
         "Lost the connection to OpenAI. Reconnecting… Until then others hear nothing from you.",
+      /** Push-to-talk mode. */
+      pushToTalk: {
+        hold: "Hold {key} to talk",
+        talking: "Talking: others hear you",
+        startFirst: "Start the outgoing translation to talk with {key}.",
+      },
     },
     goToSettings: "Go to Settings",
     status: {
@@ -97,6 +103,7 @@ export const en = {
     wholeSystem: "Whole system",
     defaultDevice: "Default device",
     defaultMicrophone: "Default microphone",
+    shortcut: "Shortcut",
     notSet: "Not set",
     openSettings: "Open settings",
     howToUse: "How to use",
@@ -108,6 +115,7 @@ export const en = {
       listening: "Listening",
       pausedHint: "Nobody is speaking: no audio is sent to OpenAI.",
       sendingHint: "Audio is being sent to OpenAI.",
+      keyUpHint: "The push-to-talk key is up: no audio is sent to OpenAI.",
     },
   },
 
@@ -176,6 +184,20 @@ export const en = {
         "No virtual cable found. Install a virtual cable such as VB-CABLE, then refresh the devices.",
       appliesNextStart:
         "The outgoing translation is running. Changes here apply the next time you start it.",
+      talkMode: "Send your voice",
+      talkModes: {
+        voiceDetection: "When you speak",
+        pushToTalk: "Push-to-talk",
+      },
+      talkModeHints: {
+        voiceDetection:
+          "Voice detection decides when you speak (see Voice detection).",
+        pushToTalk:
+          "Only while you hold the key, plus about a second after you let go so the phrase gets finished. The outgoing translation must be on: while it is off the key does nothing.",
+      },
+      pushToTalkKeyHint:
+        "Hold it while you speak. While push-to-talk is on, Windows takes this key from every other app, so pick one your game does not use.",
+      pushToTalkKeyMissing: "Choose a key to use push-to-talk.",
     },
     voice: {
       eyebrow: "Both directions",
@@ -194,6 +216,40 @@ export const en = {
       },
       appliesNextStart:
         "A translation is running. Changes here apply the next time it starts.",
+    },
+    hotkeys: {
+      eyebrow: "Keyboard",
+      title: "Keyboard shortcuts",
+      ariaLabel: "Keyboard shortcuts",
+      intro:
+        "They work while a game or a call has the focus and LiveDub Voice is hidden in the tray. Changes apply when you save.",
+      actions: {
+        toggleIncoming: "Turn incoming on or off",
+        toggleOutgoing: "Turn outgoing on or off",
+        toggleBoth: "Turn both on or off",
+        pushToTalk: "Push-to-talk key",
+      },
+      none: "None",
+      recording: "Press the keys… (Esc to cancel)",
+      change: "Change",
+      clear: "Clear the shortcut",
+      resetDefaults: "Reset to defaults",
+      keysHint:
+        "Windows takes these keys from every app while LiveDub Voice runs. Letters, numbers and other typing keys need Ctrl, Alt or Win; function keys (F1–F24), Pause, Scroll Lock and Insert also work alone. A modifier on its own or a mouse button cannot be used: map a mouse button to F13–F24 in its software instead.",
+      soundCues: "Sound cues",
+      soundCuesHint:
+        "A short, quiet sound in your headphones when a shortcut turns a translation on (rising) or off (falling).",
+      problems: {
+        needsModifier:
+          "{shortcut} needs Ctrl, Alt or Win: on its own it would stop you typing that key everywhere.",
+        unsupportedKey:
+          "{shortcut} cannot be a shortcut. Use a letter, number or function key with Ctrl, Alt or Win.",
+        conflict: "{shortcut} is already used for “{action}”.",
+        unavailable:
+          "{shortcut} is not working: another app is using it, or Windows reserves it. Choose another one.",
+        typesCharacter:
+          "{shortcut} types a character on your keyboard layout (AltGr), so it is not used. Choose another one.",
+      },
     },
     window: {
       eyebrow: "Window",
@@ -587,5 +643,9 @@ export const en = {
       "The app chosen in Settings is not running ({detail}). Open it, or translate the whole system.",
     spending_cap_reached:
       "Your spending cap is reached ({detail}). Raise it on the Usage screen, or keep going for today.",
+    hotkey_unavailable:
+      "Windows refused the shortcut {detail}: another app may be using it. Choose another one.",
+    hotkey_types_character:
+      "The shortcut {detail} types a character on your keyboard layout (AltGr). Choose another one.",
   },
 } as const;
