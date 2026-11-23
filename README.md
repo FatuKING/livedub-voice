@@ -5,7 +5,7 @@
 **Real-time voice translation for calls and games on Windows.** Hear everyone in your language, and let them hear you in theirs — without them installing anything.
 
 > [!WARNING]
-> 🚧 **Early development — not usable yet.** There is no release and the app does not translate anything yet. Watch or star the repository to follow progress.
+> 🚧 **Early development.** There is no release yet: the first installer (v0.1.0) is on its way. Until then you can build it from source (see [Development](#development)). Watch or star the repository to follow progress.
 
 ## What it does
 
@@ -47,7 +47,18 @@ You pay OpenAI directly for what you use. `gpt-realtime-translate` costs **$0.03
 
 ## Installation
 
-> **TODO** — written once the first installer is released.
+1. Download `LiveDub Voice_<version>_x64-setup.exe` from the [Releases page](https://github.com/FatuKING/livedub-voice/releases).
+2. Run it. The installer is not code-signed yet, so Windows SmartScreen may say **"Windows protected your PC"**. Click **More info**, check that the app is _LiveDub Voice_, then click **Run anyway**.
+3. Pick the installer language (English or Spanish) and follow the steps. LiveDub Voice installs for your Windows user only, so it does not ask for administrator rights. It adds a Start menu shortcut and, unless you untick it on the last page, a desktop shortcut.
+4. If WebView2 (the component that draws the panel) is missing, the installer downloads it from Microsoft, so keep an internet connection. It is already on Windows 11 and up-to-date Windows 10.
+5. For outgoing translation, also install a virtual audio cable such as [VB-CABLE](https://vb-audio.com/Cable/) (free). LiveDub Voice never installs drivers.
+
+Your settings and usage history live in `%APPDATA%\io.github.fatuking.livedubvoice`, your OpenAI API key in Windows Credential Manager and the logs in `%LOCALAPPDATA%\io.github.fatuking.livedubvoice\logs`.
+
+### Updating and uninstalling
+
+- **Update:** run the installer of the new version; it replaces the old one and keeps your settings.
+- **Uninstall:** _Settings → Apps → Installed apps → LiveDub Voice → Uninstall_. If LiveDub Voice is running (also in the tray), the uninstaller offers to close it first. Your settings, usage history and API key are **kept** by default, so a reinstall picks up where you left off. Tick **"Delete the application data"** in the uninstaller to remove them too (settings, usage history, logs and the API key stored in Credential Manager).
 
 ## Usage (Meet / Teams / Discord / games)
 
@@ -71,6 +82,8 @@ See the [Tauri prerequisites guide](https://v2.tauri.app/start/prerequisites/) f
 pnpm install
 pnpm tauri dev
 ```
+
+To build the installer, run `pnpm tauri build`; it is written to `src-tauri/target/release/bundle/nsis/`.
 
 The app is built with [Tauri 2](https://v2.tauri.app/): a Rust core handles audio and the OpenAI connection, and a React + TypeScript panel handles configuration, captions and usage.
 

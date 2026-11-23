@@ -33,9 +33,28 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "shortDescription": "Real-time voice translator for calls and games",
     "publisher": "LiveDub Voice contributors",
-    "license": "MIT"
+    "copyright": "Copyright (c) 2026 Facundo Cozzani. MIT License.",
+    "license": "MIT",
+    "homepage": "https://github.com/FatuKING/livedub-voice",
+    "category": "Utility",
+    "shortDescription": "Real-time voice translator for calls and games",
+    "longDescription": "LiveDub Voice translates voice in real time for calls and games on Windows: you hear the other participants in your language, and they hear you in theirs through a virtual microphone. It uses OpenAI's gpt-realtime-translate model with your own API key.",
+    "windows": {
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper",
+        "silent": true
+      },
+      "nsis": {
+        "installMode": "currentUser",
+        "languages": ["English", "Spanish"],
+        "displayLanguageSelector": true,
+        "installerIcon": "icons/icon.ico",
+        "headerImage": "icons/nsis-header.bmp",
+        "sidebarImage": "icons/nsis-sidebar.bmp",
+        "installerHooks": "installer/hooks.nsh"
+      }
+    }
   },
   "mainBinaryName": "livedub-voice"
 }
