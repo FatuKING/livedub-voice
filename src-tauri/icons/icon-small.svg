@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!--
+    LiveDub Voice app icon, small variant for the 16, 20 and 24 px entries of icon.ico (system
+    tray, title bar, small taskbar). Same as icon.svg without the voice bars, which turn into
+    noise at that size. Regenerate the icons with `pnpm icons`.
+  -->
+  <rect x="32" y="32" width="960" height="960" rx="216" fill="#12263A"/>
+  <path d="M256 136H528A104 104 0 0 1 632 240V432A104 104 0 0 1 528 536H368L232 656L256 536A104 104 0 0 1 152 432V240A104 104 0 0 1 256 136Z" fill="#2EC4B6"/>
+  <path d="M496 392H768A104 104 0 0 1 872 496V688A104 104 0 0 1 768 792L792 912L656 792H496A104 104 0 0 1 392 688V496A104 104 0 0 1 496 392Z" fill="#FF7A59" stroke="#12263A" stroke-width="48" paint-order="stroke"/>
+</svg>

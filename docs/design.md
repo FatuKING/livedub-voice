@@ -118,7 +118,7 @@ Reusable primitives live in [`src/components/`](../src/components). Build new sc
 | `Dialog`           | Modal question over the panel (title, body, actions). Focus starts on the first action and stays inside; Escape dismisses it. Use sparingly.    |
 | `Notice`           | Inline message: `info`, `success`, `warning`, `error` (errors use `role="alert"`).                                                              |
 | `PageHeader`       | Screen title and description; the title receives focus after navigation.                                                                        |
-| `LogoMark`         | Two stops (teal, coral) joined by a dashed route.                                                                                               |
+| `LogoMark`         | The app icon without its tile: a teal speech bubble (others) behind a coral one (you), with voice bars cut out in the surface color.            |
 
 Icons come from `lucide-react` (ISC), imported one by one so only the icons in use are bundled. Icons next to text are decorative (`aria-hidden`).
 

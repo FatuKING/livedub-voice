@@ -225,6 +225,17 @@ mod tests {
 
     use super::*;
 
+    /// The uninstaller deletes the key when the user asks to delete the app data, by its
+    /// Credential Manager target (`keyring` uses "<user>.<service>"): keep both in sync.
+    #[test]
+    fn uninstaller_deletes_the_stored_key() {
+        let hooks = include_str!("../../installer/hooks.nsh");
+        let config: serde_json::Value =
+            serde_json::from_str(include_str!("../../tauri.conf.json")).unwrap_or_default();
+        assert_eq!(config["identifier"], KEYRING_SERVICE);
+        assert!(hooks.contains(&format!("/delete:{KEYRING_USER}.${{BUNDLEID}}")));
+    }
+
     /// In-memory [`SecretStore`] for tests.
     #[derive(Default)]
     struct MemoryStore(Mutex<Option<String>>);

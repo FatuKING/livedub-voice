@@ -187,7 +187,7 @@ impl Tray {
     }
 }
 
-/// Creates the tray icon (with the app's window icon) and its menu. Call once, at startup.
+/// Creates the tray icon (the app icon at tray size) and its menu. Call once, at startup.
 pub fn create(app: &AppHandle) -> tauri::Result<()> {
     let state = app.state::<Tray>();
     let labels = lock(&state.labels).clone();
@@ -235,8 +235,8 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
                 show_window(icon.app_handle());
             }
         });
-    if let Some(icon) = app.default_window_icon() {
-        builder = builder.icon(icon.clone());
+    if let Some(icon) = tray_image(app) {
+        builder = builder.icon(icon);
     }
     let icon = builder.build(app)?;
     tracing::info!("tray icon ready");
@@ -248,6 +248,29 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
         quit,
     });
     Ok(())
+}
+
+/// The app icon at the size Windows draws tray icons (16 px at 100 % scaling, 24 px at 150 %…).
+///
+/// It comes from the icon embedded in the executable, whose 16, 20 and 24 px entries are a
+/// simplified drawing made for that size (`src-tauri/icons/icon-small.svg`); the default window
+/// icon is the 32 px one, which Windows would shrink and blur. Falls back to the window icon.
+fn tray_image(app: &AppHandle) -> Option<tauri::image::Image<'static>> {
+    #[cfg(windows)]
+    {
+        use windows::Win32::UI::WindowsAndMessaging::{GetSystemMetrics, SM_CXSMICON};
+        // SAFETY: `GetSystemMetrics` only reads a system value; it returns 0 on failure.
+        let size = match unsafe { GetSystemMetrics(SM_CXSMICON) } {
+            n if n > 0 => n.unsigned_abs(),
+            _ => 16,
+        };
+        match tauri::image::Image::from_app_icon_resource(size) {
+            Ok(icon) => return Some(icon),
+            Err(error) => tracing::warn!(%error, "no tray-sized app icon, using the window icon"),
+        }
+    }
+    app.default_window_icon()
+        .map(|icon| icon.clone().to_owned())
 }
 
 fn on_menu(app: &AppHandle, id: &str) {
