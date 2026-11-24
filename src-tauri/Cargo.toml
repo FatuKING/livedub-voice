@@ -39,6 +39,7 @@ rtrb = "0.4.1"
 rubato = { version = "5", default-features = false }
 # Local dates for the usage history and the spending cap (days and months in the user's time zone).
 chrono = { version = "0.4", default-features = false, features = ["clock", "std", "serde"] }
+tauri-plugin-global-shortcut = "2"
 
 [dev-dependencies]
 hound = "3.5"
@@ -61,7 +62,8 @@ strip = true
 [target."cfg(windows)".dependencies]
 wasapi = "0.27"
 # Same version wasapi uses: process snapshot, process names and exit checks for app capture,
-# per-app session volumes for ducking, and the tray icon size.
+# per-app session volumes for ducking, the tray icon size, and the keyboard layout check for
+# shortcuts (AltGr).
 windows = { version = "0.62", features = [
   "Win32_Foundation",
   "Win32_Media_Audio",
@@ -71,5 +73,6 @@ windows = { version = "0.62", features = [
   "Win32_System_Variant",
   "Win32_System_Diagnostics_ToolHelp",
   "Win32_System_Threading",
+  "Win32_UI_Input_KeyboardAndMouse",
   "Win32_UI_WindowsAndMessaging",
 ] }

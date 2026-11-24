@@ -37,6 +37,7 @@ Translation is done by OpenAI's `gpt-realtime-translate` model, using your own A
 - Usage panel: minutes translated and estimated cost, per session and historical, with an optional spending cap.
 - Voice detection: silence is not sent to OpenAI, and a direction that hears nobody for a while (5 minutes by default) turns itself off.
 - Runs in the system tray like Discord: closing the window keeps the translations going, and the tray menu starts, stops or quits them.
+- Global keyboard shortcuts that work while a game or call has the focus: turn incoming, outgoing or both on and off (by default `Ctrl+Alt+I`, `Ctrl+Alt+O`, `Ctrl+Alt+B`), with an optional quiet sound cue. Optional push-to-talk for the outgoing direction (hold `F8` by default): only what you say while holding it is sent.
 - Your API key is stored in Windows Credential Manager, never in plain text.
 - No telemetry: audio goes only to OpenAI. No game process injection, so it is safe with anti-cheat systems.
 
@@ -68,6 +69,17 @@ Your settings and usage history live in `%APPDATA%\io.github.fatuking.livedubvoi
 ## Usage (Meet / Teams / Discord / games)
 
 > **TODO** — step-by-step setup guides for Google Meet, Microsoft Teams, Discord and games.
+
+### Keyboard shortcuts and push-to-talk
+
+Set them in _Settings → Keyboard shortcuts_: click a shortcut, press the new combination (Esc cancels), then **Save**. Each one can be cleared, and **Reset to defaults** brings back `Ctrl+Alt+I` / `Ctrl+Alt+O` / `Ctrl+Alt+B`.
+
+- They work with the window hidden in the tray and a game in the foreground (also full-screen borderless). They use Windows' `RegisterHotKey`: no keyboard hook and nothing injected into other apps, so they are safe with anti-cheat systems.
+- While LiveDub Voice runs, Windows **takes** these combinations from every other app. Letters, numbers and other typing keys therefore need `Ctrl`, `Alt` or `Win`; function keys (`F1`–`F24`), `Pause`, `Scroll Lock` and `Insert` also work alone.
+- A combination another app already uses, or one that types a character on your keyboard layout (`AltGr` is `Ctrl+Alt`: Polish `AltGr+O` = ó), is not used, and Settings says why.
+- A modifier on its own (just `Ctrl`) and mouse buttons cannot be shortcuts. To use a mouse side button, map it to `F13`–`F24` in the mouse's software.
+
+**Push-to-talk** (_Settings → Outgoing → Send your voice → Push-to-talk_): start the outgoing translation as usual; while it runs, only what you say while holding the key (plus about a second after you let go, so the phrase gets finished) is sent and billed. While the outgoing translation is off, the key does nothing.
 
 ## Development
 

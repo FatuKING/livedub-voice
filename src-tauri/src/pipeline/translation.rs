@@ -30,6 +30,9 @@
 //! are reported (`Voice`, for the panel's indicator), and after the configured time without
 //! voice it reports `NoSpeech` once: the owner then stops the pipeline (auto-off).
 //!
+//! In push-to-talk mode (outgoing, [`PipelineConfig::talk_key`]) the pump reads the key every
+//! tick and the same gate opens while it is held instead of on voice.
+//!
 //! # Ducking (incoming)
 //!
 //! While an incoming pipeline is live, the captured apps play at the configured original-audio
@@ -96,7 +99,7 @@ use tokio::task::JoinHandle;
 use super::latency::{LatencyEvent, LatencyReport, LatencyTracker, SPEECH_RMS};
 use super::reconnect::{ReconnectError, ReconnectPolicy, reconnect};
 use super::recorder::{InputHealth, SessionRecorder};
-use super::voice::{VoiceActivity, VoiceConfig, VoiceGate};
+use super::voice::{TalkKey, VoiceActivity, VoiceConfig, VoiceGate};
 use super::{AudioIo, DuckGuard, InputSide, OutputSide, PipelineStatus, StreamGuard};
 use crate::audio::LoopbackTarget;
 use crate::audio::ducking::SharedGain;
@@ -228,6 +231,8 @@ pub struct PipelineConfig {
     pub reconnect: ReconnectPolicy,
     /// Voice detection: pausing the appends while nobody speaks, and auto-off.
     pub voice: VoiceConfig,
+    /// The push-to-talk key the gate follows (with [`VoiceConfig::push_to_talk`]).
+    pub talk_key: Option<TalkKey>,
 }
 
 /// How a pipeline was asked to stop.
@@ -556,6 +561,10 @@ impl TranslationPipeline {
         events(PipelineEvent::Status(PipelineStatus::live()));
         let pump = Pump::spawn(PumpParts {
             gate: VoiceGate::new(config.voice),
+            talk_key: config
+                .talk_key
+                .clone()
+                .filter(|_| config.voice.push_to_talk),
             auto_off: config.voice.auto_off,
             input: consumer,
             gain,
@@ -1137,6 +1146,8 @@ async fn next_output(session: &mut Option<LiveSession>) -> Option<TranslatorOutp
 struct PumpParts {
     /// Decides what is appended (see the module docs).
     gate: VoiceGate,
+    /// The push-to-talk key, read every tick (push-to-talk only).
+    talk_key: Option<TalkKey>,
     /// For the `NoSpeech` report.
     auto_off: Option<Duration>,
     input: AudioConsumer,
@@ -1192,6 +1203,10 @@ impl Drop for Pump {
 
 fn run_pump(mut parts: PumpParts) {
     let shared = Arc::clone(&parts.shared);
+    if let Some(key) = &parts.talk_key {
+        // A tap while outgoing was off must not open the gate now (a key still held does).
+        key.clear_press();
+    }
     let channels = parts.input.channels();
     let mut captured = vec![0.0_f32; 1024 * channels];
     let mut pcm: Vec<i16> = Vec::with_capacity(samples_for_ms(100));
@@ -1241,6 +1256,9 @@ fn run_pump(mut parts: PumpParts) {
                 trailing_sent += take as u64;
             } else {
                 lock(&shared.health).sent(&pcm, rms(&pcm) >= SPEECH_RMS);
+                if let Some(key) = &parts.talk_key {
+                    parts.gate.set_key_held(key.take_held());
+                }
                 gated.clear();
                 let report = parts.gate.process(&pcm, &mut gated);
                 std::mem::swap(&mut pcm, &mut gated);
@@ -2306,6 +2324,7 @@ mod tests {
             voice: VoiceConfig {
                 pause_when_silent: false,
                 auto_off: None,
+                push_to_talk: false,
             },
             ..outgoing_config()
         };
@@ -2334,6 +2353,7 @@ mod tests {
             voice: VoiceConfig {
                 pause_when_silent: true,
                 auto_off: Some(Duration::from_millis(800)),
+                push_to_talk: false,
             },
             ..outgoing_config()
         };
@@ -2608,6 +2628,7 @@ mod tests {
                 original_volume: None,
                 reconnect: ReconnectPolicy::default(),
                 voice: VoiceConfig::default(),
+                talk_key: None,
             },
             Arc::new(FakeTranslator::echo(Duration::from_millis(300))),
             Arc::new(WasapiIo::default()),
@@ -2724,6 +2745,7 @@ mod tests {
                 original_volume: Some(20),
                 reconnect: ReconnectPolicy::default(),
                 voice: VoiceConfig::default(),
+                talk_key: None,
             },
             Arc::new(FakeTranslator::echo(Duration::from_millis(300))),
             Arc::new(WasapiIo::with_ducking_journal(journal.clone())),

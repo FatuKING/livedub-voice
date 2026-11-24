@@ -1,13 +1,15 @@
 //! User settings.
 //!
 //! The settings (panel language, language direction, devices, source app, ducking volume,
-//! spending cap, voice detection, closing to the tray, first-run setup) are stored as a JSON file (`settings.json`) in Tauri's app config dir
+//! spending cap, voice detection, push-to-talk, keyboard shortcuts, closing to the tray,
+//! first-run setup) are stored as a JSON file (`settings.json`) in Tauri's app config dir
 //! (`%APPDATA%\io.github.fatuking.livedubvoice`). The OpenAI API key is never part of this file:
 //! it lives only in Windows Credential Manager.
 //!
 //! File I/O works on plain paths ([`load`], [`save`]) so it can be tested without a Tauri
 //! `AppHandle`; [`SettingsStore`] wraps it with the in-memory copy kept in Tauri managed state.
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -16,14 +18,16 @@ use std::sync::Mutex;
 use serde::{Deserialize, Serialize};
 
 use crate::error::{AppError, AppResult};
+use crate::hotkeys::{self, HotkeyAction};
 use crate::persist::{with_suffix, write_atomic};
 
 /// Current version of the settings file format. Bump it when the shape changes, and add the
 /// step from the previous version to [`migrate`].
 ///
 /// History: 1 = initial format; 2 = adds `uiLanguage`; 3 = adds `spendingCap`; 4 = adds
-/// `voiceActivity`, `closeQuitsApp` and `trayNoticeShown`; 5 = adds `onboardingCompleted`.
-pub const SETTINGS_VERSION: u32 = 5;
+/// `voiceActivity`, `closeQuitsApp` and `trayNoticeShown`; 5 = adds `onboardingCompleted`;
+/// 6 = adds `hotkeys` and `outgoing.talkMode`.
+pub const SETTINGS_VERSION: u32 = 6;
 
 /// Name of the settings file inside the app config dir.
 pub const SETTINGS_FILE_NAME: &str = "settings.json";
@@ -170,6 +174,17 @@ impl Default for IncomingSettings {
     }
 }
 
+/// What the outgoing direction sends to OpenAI while it runs.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum TalkMode {
+    /// What voice detection hears (see [`VoiceActivitySettings`]).
+    #[default]
+    VoiceDetection,
+    /// Only while the push-to-talk key is held (plus the usual tail after it).
+    PushToTalk,
+}
+
 /// Outgoing direction: the user's microphone → a virtual cable used as mic by the call/game app.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -182,6 +197,8 @@ pub struct OutgoingSettings {
     /// Playback device to write the translation to (normally a virtual cable); `None` means
     /// not chosen yet.
     pub output_device_id: Option<String>,
+    /// Voice detection, or push-to-talk (with the `pushToTalk` shortcut).
+    pub talk_mode: TalkMode,
 }
 
 impl Default for OutgoingSettings {
@@ -191,6 +208,7 @@ impl Default for OutgoingSettings {
             target_language: Language::English,
             input_device_id: None,
             output_device_id: None,
+            talk_mode: TalkMode::VoiceDetection,
         }
     }
 }
@@ -226,6 +244,39 @@ impl Default for VoiceActivitySettings {
     }
 }
 
+/// Global keyboard shortcuts (see [`crate::hotkeys`]).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct HotkeySettings {
+    /// The shortcut of each action (`"Ctrl+Alt+KeyI"`); `null` = none. An action missing from
+    /// the map uses its default ([`HotkeyAction::default_binding`]).
+    pub bindings: BTreeMap<HotkeyAction, Option<String>>,
+    /// A short, quiet sound in the headphones when a shortcut turns a direction on or off.
+    pub sound_cues: bool,
+}
+
+impl Default for HotkeySettings {
+    fn default() -> Self {
+        Self {
+            bindings: HotkeyAction::ALL
+                .into_iter()
+                .map(|action| (action, action.default_binding().map(str::to_owned)))
+                .collect(),
+            sound_cues: true,
+        }
+    }
+}
+
+impl HotkeySettings {
+    /// `action`'s shortcut as stored (`None` = none), its default when it is not stored.
+    pub fn binding(&self, action: HotkeyAction) -> Option<&str> {
+        match self.bindings.get(&action) {
+            Some(binding) => binding.as_deref(),
+            None => action.default_binding(),
+        }
+    }
+}
+
 /// All user settings, as stored in `settings.json`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -238,6 +289,7 @@ pub struct Settings {
     pub outgoing: OutgoingSettings,
     pub spending_cap: SpendingCapSettings,
     pub voice_activity: VoiceActivitySettings,
+    pub hotkeys: HotkeySettings,
     /// Closing the window quits the app (stopping the translations). Off by default: the
     /// window hides to the tray and the translations keep running.
     pub close_quits_app: bool,
@@ -258,6 +310,7 @@ impl Default for Settings {
             outgoing: OutgoingSettings::default(),
             spending_cap: SpendingCapSettings::default(),
             voice_activity: VoiceActivitySettings::default(),
+            hotkeys: HotkeySettings::default(),
             close_quits_app: false,
             tray_notice_shown: false,
             onboarding_completed: false,
@@ -296,6 +349,12 @@ impl Settings {
             return Err(invalid(format!(
                 "auto-off must be between 1 and {MAX_AUTO_OFF_MINUTES} minutes, got {minutes}"
             )));
+        }
+        hotkeys::check_bindings(&self.hotkeys).map_err(|problem| invalid(problem.to_string()))?;
+        if self.outgoing.talk_mode == TalkMode::PushToTalk
+            && self.hotkeys.binding(HotkeyAction::PushToTalk).is_none()
+        {
+            return Err(invalid("push-to-talk needs a shortcut".into()));
         }
         Ok(())
     }
@@ -380,6 +439,19 @@ pub fn migrate(value: &mut serde_json::Value) -> Result<(), String> {
             .or_insert_with(|| serde_json::json!(false));
         version = 5;
     }
+    if version == 5 {
+        // 5 → 6: the global shortcuts with their defaults (see `hotkeys`) and sound cues on;
+        // the outgoing direction keeps voice detection.
+        object
+            .entry("hotkeys")
+            .or_insert_with(|| serde_json::json!(HotkeySettings::default()));
+        if let Some(outgoing) = object.get_mut("outgoing").and_then(|o| o.as_object_mut()) {
+            outgoing
+                .entry("talkMode")
+                .or_insert_with(|| serde_json::json!("voiceDetection"));
+        }
+        version = 6;
+    }
 
     object.insert("version".into(), version.into());
     Ok(())
@@ -411,6 +483,49 @@ fn reset_unknown_languages(value: &mut serde_json::Value) {
     }
 }
 
+/// Turns a shortcut this build cannot use (a key a newer version knows, a hand-edited file) into
+/// "none", with a warning, instead of discarding the whole file; actions this build does not
+/// know are dropped. A push-to-talk mode left without its key goes back to voice detection.
+fn reset_unusable_hotkeys(value: &mut serde_json::Value) {
+    let Some(bindings) = value
+        .get_mut("hotkeys")
+        .and_then(|hotkeys| hotkeys.get_mut("bindings"))
+        .and_then(|bindings| bindings.as_object_mut())
+    else {
+        return;
+    };
+    bindings.retain(|action, _| {
+        let known = serde_json::from_value::<HotkeyAction>(action.as_str().into()).is_ok();
+        if !known {
+            tracing::warn!(action, "unknown shortcut action in settings, ignoring it");
+        }
+        known
+    });
+    for (action, binding) in bindings.iter_mut() {
+        let usable = match binding {
+            serde_json::Value::Null => true,
+            serde_json::Value::String(text) => hotkeys::Hotkey::parse(text).is_ok(),
+            _ => false,
+        };
+        if !usable {
+            tracing::warn!(action, shortcut = %binding, "unusable shortcut in settings, clearing it");
+            *binding = serde_json::Value::Null;
+        }
+    }
+    let push_to_talk_cleared = bindings
+        .get("pushToTalk")
+        .is_some_and(serde_json::Value::is_null);
+    if push_to_talk_cleared
+        && let Some(mode) = value
+            .get_mut("outgoing")
+            .and_then(|outgoing| outgoing.get_mut("talkMode"))
+        && mode == "pushToTalk"
+    {
+        tracing::warn!("push-to-talk has no shortcut, using voice detection");
+        *mode = "voiceDetection".into();
+    }
+}
+
 /// Loads settings from `path`.
 ///
 /// Files from older versions are migrated (see [`migrate`]); the upgraded file is written on the
@@ -434,6 +549,7 @@ pub fn load(path: &Path) -> Settings {
         .and_then(|mut value| {
             migrate(&mut value)?;
             reset_unknown_languages(&mut value);
+            reset_unusable_hotkeys(&mut value);
             serde_json::from_value::<Settings>(value).map_err(|error| error.to_string())
         })
         .and_then(|settings| {
@@ -560,7 +676,7 @@ mod tests {
         assert_eq!(
             serde_json::to_value(Settings::default()).unwrap(),
             json!({
-                "version": 5,
+                "version": 6,
                 "uiLanguage": "system",
                 "incoming": {
                     "enabled": false,
@@ -573,10 +689,20 @@ mod tests {
                     "enabled": false,
                     "targetLanguage": "en",
                     "inputDeviceId": null,
-                    "outputDeviceId": null
+                    "outputDeviceId": null,
+                    "talkMode": "voiceDetection"
                 },
                 "spendingCap": { "dailyUsd": null, "monthlyUsd": null },
                 "voiceActivity": { "pauseWhenSilent": true, "autoOffMinutes": 5 },
+                "hotkeys": {
+                    "bindings": {
+                        "toggleIncoming": "Ctrl+Alt+KeyI",
+                        "toggleOutgoing": "Ctrl+Alt+KeyO",
+                        "toggleBoth": "Ctrl+Alt+KeyB",
+                        "pushToTalk": "F8"
+                    },
+                    "soundCues": true
+                },
                 "closeQuitsApp": false,
                 "trayNoticeShown": false,
                 "onboardingCompleted": false
@@ -704,13 +830,22 @@ mod tests {
         assert_eq!(
             value,
             json!({
-                "version": 5,
+                "version": 6,
                 "uiLanguage": "es",
                 "spendingCap": { "dailyUsd": null, "monthlyUsd": null },
                 "voiceActivity": { "pauseWhenSilent": true, "autoOffMinutes": 5 },
                 "closeQuitsApp": false,
                 "trayNoticeShown": false,
-                "onboardingCompleted": false
+                "onboardingCompleted": false,
+                "hotkeys": {
+                    "bindings": {
+                        "toggleIncoming": "Ctrl+Alt+KeyI",
+                        "toggleOutgoing": "Ctrl+Alt+KeyO",
+                        "toggleBoth": "Ctrl+Alt+KeyB",
+                        "pushToTalk": "F8"
+                    },
+                    "soundCues": true
+                }
             })
         );
     }
@@ -790,7 +925,9 @@ mod tests {
         // Everything is kept; only the version, the (off) spending cap, the voice and tray
         // settings and the onboarding flag are new.
         let mut expected = file;
-        expected["version"] = json!(5);
+        expected["version"] = json!(6);
+        expected["outgoing"]["talkMode"] = json!("voiceDetection");
+        expected["hotkeys"] = serde_json::to_value(HotkeySettings::default()).unwrap();
         expected["spendingCap"] = json!({ "dailyUsd": null, "monthlyUsd": null });
         expected["voiceActivity"] = json!({ "pauseWhenSilent": true, "autoOffMinutes": 5 });
         expected["closeQuitsApp"] = json!(false);
@@ -856,7 +993,7 @@ mod tests {
 
         migrate(&mut value).unwrap();
 
-        assert_eq!(value["version"], json!(5));
+        assert_eq!(value["version"], json!(6));
         assert_eq!(
             value["voiceActivity"],
             json!({ "pauseWhenSilent": false, "autoOffMinutes": null })
@@ -949,10 +1086,13 @@ mod tests {
 
         let settings = load(&path);
 
-        // Everything is kept; only the version and the (not yet completed) onboarding change.
+        // Everything is kept; only the version, the (not yet completed) onboarding and the
+        // shortcuts (defaults, voice detection) change.
         let mut expected = file;
-        expected["version"] = json!(5);
+        expected["version"] = json!(6);
         expected["onboardingCompleted"] = json!(false);
+        expected["outgoing"]["talkMode"] = json!("voiceDetection");
+        expected["hotkeys"] = serde_json::to_value(HotkeySettings::default()).unwrap();
         assert_eq!(serde_json::to_value(&settings).unwrap(), expected);
         assert!(!backup_path(&path).exists());
     }
@@ -973,7 +1113,7 @@ mod tests {
 
         migrate(&mut value).unwrap();
 
-        assert_eq!(value["version"], json!(5));
+        assert_eq!(value["version"], json!(6));
         assert_eq!(value["onboardingCompleted"], json!(true));
     }
 
@@ -1014,6 +1154,153 @@ mod tests {
             })
             .unwrap();
         assert!(!saved.onboarding_completed);
+    }
+
+    fn version_5_file() -> serde_json::Value {
+        json!({
+            "version": 5,
+            "uiLanguage": "en",
+            "outgoing": {
+                "enabled": false,
+                "targetLanguage": "de",
+                "inputDeviceId": "mic",
+                "outputDeviceId": "cable-input"
+            },
+            "voiceActivity": { "pauseWhenSilent": true, "autoOffMinutes": 15 },
+            "closeQuitsApp": false,
+            "trayNoticeShown": true,
+            "onboardingCompleted": true
+        })
+    }
+
+    #[test]
+    fn version_5_file_migrates_with_default_shortcuts_and_voice_detection() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(SETTINGS_FILE_NAME);
+        let file = version_5_file();
+        fs::write(&path, file.to_string()).unwrap();
+
+        let settings = load(&path);
+
+        assert_eq!(settings.version, SETTINGS_VERSION);
+        assert_eq!(settings.hotkeys, HotkeySettings::default());
+        assert_eq!(settings.outgoing.talk_mode, TalkMode::VoiceDetection);
+        // The rest is kept.
+        assert_eq!(settings.outgoing.target_language, Language::German);
+        assert_eq!(settings.voice_activity.auto_off_minutes, Some(15));
+        assert!(settings.onboarding_completed);
+        assert!(!backup_path(&path).exists());
+    }
+
+    #[test]
+    fn migrate_keeps_shortcuts_already_present() {
+        let mut value = version_5_file();
+        value["hotkeys"] = json!({ "bindings": { "toggleBoth": null }, "soundCues": false });
+        value["outgoing"]["talkMode"] = json!("pushToTalk");
+
+        migrate(&mut value).unwrap();
+
+        assert_eq!(value["version"], json!(6));
+        assert_eq!(
+            value["hotkeys"],
+            json!({ "bindings": { "toggleBoth": null }, "soundCues": false })
+        );
+        assert_eq!(value["outgoing"]["talkMode"], json!("pushToTalk"));
+    }
+
+    #[test]
+    fn shortcuts_and_talk_mode_round_trip() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(SETTINGS_FILE_NAME);
+        let mut settings = Settings::default();
+        settings.outgoing.talk_mode = TalkMode::PushToTalk;
+        settings.hotkeys.sound_cues = false;
+        settings
+            .hotkeys
+            .bindings
+            .insert(HotkeyAction::PushToTalk, Some("Shift+F13".into()));
+        settings
+            .hotkeys
+            .bindings
+            .insert(HotkeyAction::ToggleBoth, None);
+
+        save(&path, &settings).unwrap();
+
+        assert_eq!(load(&path), settings);
+    }
+
+    #[test]
+    fn unusable_shortcuts_are_cleared_not_the_whole_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(SETTINGS_FILE_NAME);
+        let mut file = version_5_file();
+        file["version"] = json!(6);
+        file["outgoing"]["talkMode"] = json!("pushToTalk");
+        file["hotkeys"] = json!({
+            "bindings": {
+                "toggleIncoming": "Ctrl+Alt+Mouse4",
+                "toggleOutgoing": 7,
+                "pushToTalk": "KeyT",
+                "toggleCaptionsFromTheFuture": "Ctrl+Alt+KeyC"
+            },
+            "soundCues": true
+        });
+        fs::write(&path, file.to_string()).unwrap();
+
+        let settings = load(&path);
+
+        assert_eq!(settings.hotkeys.binding(HotkeyAction::ToggleIncoming), None);
+        assert_eq!(settings.hotkeys.binding(HotkeyAction::ToggleOutgoing), None);
+        assert_eq!(settings.hotkeys.binding(HotkeyAction::PushToTalk), None);
+        // Not in the file: its default.
+        assert_eq!(
+            settings.hotkeys.binding(HotkeyAction::ToggleBoth),
+            Some("Ctrl+Alt+KeyB")
+        );
+        // Push-to-talk lost its key: back to voice detection.
+        assert_eq!(settings.outgoing.talk_mode, TalkMode::VoiceDetection);
+        assert_eq!(settings.outgoing.target_language, Language::German);
+        assert!(!backup_path(&path).exists());
+    }
+
+    #[test]
+    fn validate_rejects_conflicting_or_invalid_shortcuts() {
+        let mut settings = Settings::default();
+        settings
+            .hotkeys
+            .bindings
+            .insert(HotkeyAction::ToggleOutgoing, Some("Ctrl+Alt+KeyI".into()));
+        let error = settings.validate().unwrap_err();
+        assert_eq!(error.code(), "invalid_settings");
+        assert!(error.to_string().contains("same shortcut"), "{error}");
+
+        let mut settings = Settings::default();
+        settings
+            .hotkeys
+            .bindings
+            .insert(HotkeyAction::ToggleBoth, Some("Shift+KeyB".into()));
+        assert!(matches!(
+            settings.validate(),
+            Err(AppError::InvalidSettings(_))
+        ));
+    }
+
+    #[test]
+    fn validate_requires_a_key_for_push_to_talk() {
+        let mut settings = Settings::default();
+        settings.outgoing.talk_mode = TalkMode::PushToTalk;
+        assert!(settings.validate().is_ok());
+
+        settings
+            .hotkeys
+            .bindings
+            .insert(HotkeyAction::PushToTalk, None);
+        let error = settings.validate().unwrap_err();
+        assert!(error.to_string().contains("push-to-talk"), "{error}");
+
+        // Without push-to-talk mode, no key is fine.
+        settings.outgoing.talk_mode = TalkMode::VoiceDetection;
+        assert!(settings.validate().is_ok());
     }
 
     #[test]

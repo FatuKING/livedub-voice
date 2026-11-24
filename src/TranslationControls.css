@@ -45,6 +45,30 @@
   color: var(--color-text-muted);
 }
 
+/* Push-to-talk: "Hold F8 to talk", and a coral "Talking" state while the key is held. */
+.ld-translation__ptt {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-muted);
+  transition:
+    background-color var(--duration-fast) var(--easing-standard),
+    border-color var(--duration-fast) var(--easing-standard),
+    color var(--duration-fast) var(--easing-standard);
+}
+
+.ld-translation__ptt--talking {
+  background: var(--color-outgoing);
+  border-color: var(--color-outgoing);
+  color: var(--color-on-outgoing);
+}
+
 /* Captions take their direction's color: teal for incoming, coral for outgoing. */
 .ld-translation__caption--outgoing {
   border-left-color: var(--color-outgoing);

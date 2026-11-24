@@ -114,6 +114,7 @@ Reusable primitives live in [`src/components/`](../src/components). Build new sc
 | `LanguageRoute`    | The route motif: `to`, `direction`, `size`, optional `from` (omitted = auto-detected, shown as "Auto"). Announced as "Any language to Spanish".   |
 | `LevelMeter`       | VU bar on a dB scale (−60 to 0 dBFS) with a peak tick (sun near clipping); `role="meter"`.                                                        |
 | `StatusPill`       | Small state label with a dot. Tones `neutral`, `incoming`, `outgoing`, `sun`, `danger`.                                                           |
+| `ShortcutField`    | Records a keyboard shortcut: click, press the combination (Esc cancels), clear button. Recording takes the `direction` color; errors under it.    |
 | `VoiceIndicator`   | Whether a running direction hears speech: an icon and "Speaking" (direction color) or "Listening" (muted), with an optional muted hint.           |
 | `Dialog`           | Modal question over the panel (title, body, actions). Focus starts on the first action and stays inside; Escape dismisses it. Use sparingly.      |
 | `Notice`           | Inline message: `info`, `success`, `warning`, `error` (errors use `role="alert"`).                                                                |

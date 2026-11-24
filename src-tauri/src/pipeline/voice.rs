@@ -35,6 +35,16 @@
 //! session stays open (kept alive by the WebSocket pings, see `translator::session`) and the
 //! gap simply does not exist for the model.
 //!
+//! # Push-to-talk
+//!
+//! With [`VoiceConfig::push_to_talk`] (outgoing only) the gate opens while the push-to-talk key
+//! is held instead of while voice is detected ([`VoiceGate::set_key_held`]): everything else is
+//! the same machinery. Pressing the key appends the [`PRE_ROLL`] first (people start speaking as
+//! they press), then everything while it is held; releasing it appends [`TRAILING`] more (to a
+//! chunk boundary) so the model finishes the phrase, then appending stops. Pausing is always on
+//! in this mode, and auto-off counts from the last time the key was held. The detector still
+//! runs, for the "speaking" indicator.
+//!
 //! The gate also measures how long nobody spoke, for **auto-off**: after the configured time it
 //! reports it once (the pipeline then stops through the manager). The time is the audio's own
 //! clock (samples processed), so it is exact and needs no timer; the captured audio keeps
@@ -200,17 +210,27 @@ pub struct VoiceConfig {
     pub pause_when_silent: bool,
     /// Report after this long without voice; `None` = never.
     pub auto_off: Option<Duration>,
+    /// Open the gate while the push-to-talk key is held instead of on voice (see the
+    /// [module docs](self)). `pause_when_silent` is ignored: nothing is appended otherwise.
+    pub push_to_talk: bool,
 }
 
 impl VoiceConfig {
-    /// The gate's configuration from the user's settings.
+    /// The gate's configuration from the user's settings (voice detection; the outgoing
+    /// direction sets [`push_to_talk`](Self::push_to_talk) from its talk mode).
     pub fn from_settings(settings: &crate::settings::VoiceActivitySettings) -> Self {
         Self {
             pause_when_silent: settings.pause_when_silent,
             auto_off: settings
                 .auto_off_minutes
                 .map(|minutes| Duration::from_secs(u64::from(minutes) * 60)),
+            push_to_talk: false,
         }
+    }
+
+    /// Whether the gate starts (and stays) appending everything.
+    fn appends_everything(self) -> bool {
+        !self.pause_when_silent && !self.push_to_talk
     }
 }
 
@@ -219,9 +239,61 @@ impl Default for VoiceConfig {
         Self {
             pause_when_silent: true,
             auto_off: None,
+            push_to_talk: false,
         }
     }
 }
+
+/// The push-to-talk key's state, shared by the hotkey handler (which presses and releases it)
+/// and the outgoing pipeline's pump (which reads it every tick). Cheap to clone.
+#[derive(Debug, Clone, Default)]
+pub struct TalkKey(std::sync::Arc<TalkKeyState>);
+
+#[derive(Debug, Default)]
+pub struct TalkKeyState {
+    held: std::sync::atomic::AtomicBool,
+    /// A press not seen by the pump yet: a tap shorter than a tick still opens the gate once.
+    pressed: std::sync::atomic::AtomicBool,
+}
+
+impl TalkKey {
+    /// The key went down (`true`) or up (`false`).
+    pub fn set_held(&self, held: bool) {
+        use std::sync::atomic::Ordering;
+        if held {
+            self.0.pressed.store(true, Ordering::SeqCst);
+        }
+        self.0.held.store(held, Ordering::SeqCst);
+    }
+
+    /// Whether the key is down now.
+    pub fn is_held(&self) -> bool {
+        self.0.held.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// Forgets a press the pump has not seen (one from before the pipeline started).
+    pub fn clear_press(&self) {
+        self.0
+            .pressed
+            .store(false, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    /// Whether the key is down, or was pressed since the last call (for the pump).
+    pub fn take_held(&self) -> bool {
+        use std::sync::atomic::Ordering;
+        let pressed = self.0.pressed.swap(false, Ordering::SeqCst);
+        self.0.held.load(Ordering::SeqCst) || pressed
+    }
+}
+
+impl PartialEq for TalkKey {
+    /// The same key (not the same state).
+    fn eq(&self, other: &Self) -> bool {
+        std::sync::Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+impl Eq for TalkKey {}
 
 /// What the panel's indicator shows.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize)]
@@ -256,8 +328,11 @@ pub struct VoiceGate {
     sending: bool,
     /// Samples appended so far (for the chunk boundary).
     appended: u64,
-    /// Samples since the last loud frame (or the start).
+    /// Samples since the gate's source (voice, or the push-to-talk key) was last on, or the
+    /// start.
     since_voice: u64,
+    /// The push-to-talk key is held (only with [`VoiceConfig::push_to_talk`]).
+    key_held: bool,
     trailing: u64,
     auto_off: Option<u64>,
     auto_off_reported: bool,
@@ -274,15 +349,16 @@ impl VoiceGate {
             pending: Vec::with_capacity(FRAME_SAMPLES),
             pre_roll: VecDeque::with_capacity(pre_roll_samples + FRAME_SAMPLES),
             pre_roll_samples,
-            sending: !config.pause_when_silent,
+            sending: config.appends_everything(),
             appended: 0,
             since_voice: 0,
+            key_held: false,
             trailing: samples_of(TRAILING),
             auto_off: config.auto_off.map(samples_of),
             auto_off_reported: false,
             activity: VoiceActivity {
                 speaking: false,
-                sending: !config.pause_when_silent,
+                sending: config.appends_everything(),
             },
         }
     }
@@ -290,6 +366,12 @@ impl VoiceGate {
     /// What the indicator shows now.
     pub fn activity(&self) -> VoiceActivity {
         self.activity
+    }
+
+    /// Sets whether the push-to-talk key is held; applies from the next frame. Ignored without
+    /// [`VoiceConfig::push_to_talk`].
+    pub fn set_key_held(&mut self, held: bool) {
+        self.key_held = held;
     }
 
     /// Whether appending is paused (nothing said for a while).
@@ -325,7 +407,12 @@ impl VoiceGate {
     }
 
     fn frame(&mut self, frame: &[i16], out: &mut Vec<i16>, report: &mut GateReport) {
-        let active = self.detector.process(frame);
+        let voice = self.detector.process(frame);
+        let active = if self.config.push_to_talk {
+            self.key_held
+        } else {
+            voice
+        };
         if active {
             self.since_voice = 0;
         } else {
@@ -339,14 +426,20 @@ impl VoiceGate {
             report.auto_off = true;
         }
 
-        if !self.config.pause_when_silent {
+        if self.config.appends_everything() {
             self.append(frame, out);
             return;
         }
         if self.sending {
             self.append(frame, out);
-            // The hangover is part of the trailing time: `since_voice` starts when it ends.
-            let quiet = self.since_voice + samples_of(HANGOVER);
+            // With voice, the hangover is part of the trailing time: `since_voice` starts when
+            // it ends. A released key has none.
+            let hangover = if self.config.push_to_talk {
+                0
+            } else {
+                samples_of(HANGOVER)
+            };
+            let quiet = self.since_voice + hangover;
             if !active
                 && quiet >= self.trailing
                 && self.appended.is_multiple_of(CHUNK_SAMPLES as u64)
@@ -460,6 +553,7 @@ mod tests {
         VoiceConfig {
             pause_when_silent: true,
             auto_off: None,
+            push_to_talk: false,
         }
     }
 
@@ -638,6 +732,7 @@ mod tests {
         let mut gate = VoiceGate::new(VoiceConfig {
             pause_when_silent: false,
             auto_off: None,
+            push_to_talk: false,
         });
         let input = concat(&[silence(2000), speech(1000, -25.0), silence(2000)]);
         let (out, _) = run(&mut gate, &input);
@@ -650,6 +745,7 @@ mod tests {
         let mut gate = VoiceGate::new(VoiceConfig {
             pause_when_silent: true,
             auto_off: Some(Duration::from_secs(60)),
+            push_to_talk: false,
         });
         let mut quiet_ms = 0;
         let mut reported = Vec::new();
@@ -672,6 +768,7 @@ mod tests {
         let mut gate = VoiceGate::new(VoiceConfig {
             pause_when_silent: false,
             auto_off: Some(Duration::from_secs(10)),
+            push_to_talk: false,
         });
         let input = concat(&[
             silence(8000),
@@ -691,8 +788,152 @@ mod tests {
         let mut gate = VoiceGate::new(VoiceConfig {
             pause_when_silent: true,
             auto_off: Some(Duration::from_secs(5)),
+            push_to_talk: false,
         });
         let (_, reports) = run(&mut gate, &silence(6000));
         assert_eq!(reports.iter().filter(|report| report.auto_off).count(), 1);
+    }
+
+    fn push_to_talk() -> VoiceConfig {
+        VoiceConfig {
+            pause_when_silent: false,
+            auto_off: None,
+            push_to_talk: true,
+        }
+    }
+
+    /// Feeds `input` in 10 ms blocks with the key held over `held` (`[from, to)` in samples), like the
+    /// pump does (the key is read before each block).
+    fn run_with_key(
+        gate: &mut VoiceGate,
+        input: &[i16],
+        held: &[(usize, usize)],
+    ) -> (Vec<i16>, Vec<GateReport>) {
+        let mut out = Vec::new();
+        let mut reports = Vec::new();
+        for (index, block) in input.chunks(240).enumerate() {
+            let at = index * 240;
+            gate.set_key_held(held.iter().any(|&(from, to)| (from..to).contains(&at)));
+            let report = gate.process(block, &mut out);
+            if report != GateReport::default() {
+                reports.push(report);
+            }
+        }
+        (out, reports)
+    }
+
+    #[test]
+    fn push_to_talk_sends_nothing_while_the_key_is_up_even_with_speech() {
+        // `pause_when_silent: false` is ignored: push-to-talk always pauses.
+        let mut gate = VoiceGate::new(push_to_talk());
+        assert!(gate.is_paused());
+        let input = concat(&[silence(500), speech(3000, -25.0), silence(2000)]);
+        let (out, reports) = run_with_key(&mut gate, &input, &[]);
+        assert!(out.is_empty());
+        // The indicator still says someone speaks, but nothing is sent.
+        assert!(
+            reports
+                .iter()
+                .filter_map(|report| report.activity)
+                .all(|activity| !activity.sending)
+        );
+        assert!(
+            reports
+                .iter()
+                .any(|report| report.activity.is_some_and(|activity| activity.speaking))
+        );
+    }
+
+    #[test]
+    fn push_to_talk_sends_pre_roll_held_audio_and_a_tail_after_release() {
+        let mut gate = VoiceGate::new(push_to_talk());
+        // Background noise throughout; the key is held from 2 s to 4 s.
+        let input = noise(10_000, -55.0, 21);
+        let press = ms(2000);
+        let release = ms(4000);
+        let (out, reports) = run_with_key(&mut gate, &input, &[(press, release)]);
+
+        // One contiguous stretch of the input: the pre-roll before the press, everything while
+        // held, then TRAILING after the release, to a 200 ms chunk boundary.
+        let start = press - ms(300);
+        assert_eq!(out[..], input[start..start + out.len()]);
+        assert_eq!(out.len() % CHUNK_SAMPLES, 0);
+        let after = start + out.len() - release;
+        assert!(
+            (ms(1200)..ms(1400)).contains(&after),
+            "{} ms sent after the release",
+            after / 24
+        );
+        assert!(gate.is_paused());
+
+        let sending: Vec<bool> = reports
+            .iter()
+            .filter_map(|report| report.activity)
+            .map(|activity| activity.sending)
+            .collect();
+        assert_eq!(sending, [true, false]);
+    }
+
+    #[test]
+    fn pressing_again_during_the_tail_keeps_one_stretch() {
+        let mut gate = VoiceGate::new(push_to_talk());
+        let input = noise(8000, -55.0, 22);
+        let held = [(ms(1000), ms(2000)), (ms(2500), ms(3500))];
+        let (out, _) = run_with_key(&mut gate, &input, &held);
+
+        let start = ms(1000) - ms(300);
+        assert_eq!(out[..], input[start..start + out.len()]);
+        let after = start + out.len() - ms(3500);
+        assert!((ms(1200)..ms(1400)).contains(&after), "{} ms", after / 24);
+    }
+
+    #[test]
+    fn two_presses_far_apart_send_two_stretches() {
+        let mut gate = VoiceGate::new(push_to_talk());
+        let input = noise(20_000, -55.0, 23);
+        let held = [(ms(1000), ms(2000)), (ms(10_000), ms(11_000))];
+        let (out, _) = run_with_key(&mut gate, &input, &held);
+        // Each: 300 ms pre-roll + 1 s held + ~1.2–1.4 s tail.
+        let seconds = out.len() as f64 / f64::from(SAMPLE_RATE);
+        assert!((5.0..5.5).contains(&seconds), "{seconds} s sent");
+    }
+
+    #[test]
+    fn push_to_talk_auto_off_counts_from_the_last_press() {
+        let mut gate = VoiceGate::new(VoiceConfig {
+            auto_off: Some(Duration::from_secs(5)),
+            ..push_to_talk()
+        });
+        // Talking without the key does not count as activity.
+        let input = concat(&[speech(4000, -25.0), silence(2000)]);
+        let (_, reports) = run_with_key(&mut gate, &input, &[(ms(3000), ms(3500))]);
+        assert!(reports.iter().all(|report| !report.auto_off));
+        // 5 s after the release (at 3.5 s).
+        let (_, reports) = run_with_key(&mut gate, &silence(2400), &[]);
+        assert!(reports.iter().all(|report| !report.auto_off));
+        let (_, reports) = run_with_key(&mut gate, &silence(200), &[]);
+        assert!(reports.iter().any(|report| report.auto_off));
+    }
+
+    #[test]
+    fn a_tap_between_two_reads_still_opens_the_gate_once() {
+        let key = TalkKey::default();
+        assert!(!key.take_held());
+        key.set_held(true);
+        key.set_held(false);
+        assert!(key.take_held(), "the tap is seen once");
+        assert!(!key.take_held());
+        key.set_held(true);
+        assert!(key.take_held());
+        assert!(key.take_held(), "still held");
+        assert!(key.is_held());
+        key.set_held(false);
+        assert!(!key.take_held(), "released, and the press was already seen");
+        key.set_held(true);
+        key.set_held(false);
+        key.clear_press();
+        assert!(!key.take_held(), "an old tap is forgotten");
+        assert_eq!(key.clone(), key);
+        assert_ne!(key, TalkKey::default());
     }
 }

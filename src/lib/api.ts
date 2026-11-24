@@ -78,6 +78,12 @@ export interface IncomingSettings {
   originalVolume: number;
 }
 
+/**
+ * What the outgoing direction sends while it runs: what voice detection hears, or only while the
+ * push-to-talk key is held.
+ */
+export type TalkMode = "voiceDetection" | "pushToTalk";
+
 /** Outgoing direction: the user's microphone → a virtual cable used as mic by the call/game app. */
 export interface OutgoingSettings {
   enabled: boolean;
@@ -87,6 +93,8 @@ export interface OutgoingSettings {
   inputDeviceId: string | null;
   /** Playback device to write the translation to (normally a virtual cable). */
   outputDeviceId: string | null;
+  /** Voice detection, or push-to-talk (with the `pushToTalk` shortcut). */
+  talkMode: TalkMode;
 }
 
 /** In-app spending cap, in US dollars; `null` = no cap for that period. Off by default. */
@@ -106,6 +114,24 @@ export interface VoiceActivitySettings {
 }
 
 /**
+ * Something a global keyboard shortcut does. Mirrors `HotkeyAction` in
+ * `src-tauri/src/hotkeys/mod.rs`.
+ */
+export type HotkeyAction =
+  "toggleIncoming" | "toggleOutgoing" | "toggleBoth" | "pushToTalk";
+
+/** Global keyboard shortcuts. */
+export interface HotkeySettings {
+  /**
+   * Each action's shortcut (`"Ctrl+Alt+KeyI"`: modifiers, then a `KeyboardEvent.code`); `null` =
+   * none. A missing action uses its default.
+   */
+  bindings: Partial<Record<HotkeyAction, string | null>>;
+  /** A short, quiet sound in the headphones when a shortcut turns a direction on or off. */
+  soundCues: boolean;
+}
+
+/**
  * User settings, as stored in `settings.json`.
  *
  * Mirrors `Settings` in `src-tauri/src/settings/mod.rs`.
@@ -119,6 +145,7 @@ export interface Settings {
   outgoing: OutgoingSettings;
   spendingCap: SpendingCapSettings;
   voiceActivity: VoiceActivitySettings;
+  hotkeys: HotkeySettings;
   /** Closing the window quits the app (off = it hides to the tray and keeps translating). */
   closeQuitsApp: boolean;
   /** The one-off tray notice was shown. Owned by the core: saving never turns it back off. */
@@ -136,9 +163,12 @@ export function getSettings(): Promise<Settings> {
 }
 
 /**
- * Validates and saves the settings, resolving with what was saved.
+ * Validates and saves the settings, resolving with what was saved. The keyboard shortcuts are
+ * registered again at once.
  *
- * Rejects with an {@link AppError} (code `"invalid_settings"`) when the settings are not valid.
+ * Rejects with an {@link AppError}: `"invalid_settings"` when the settings are not valid,
+ * `"hotkey_unavailable"` when Windows refuses a changed shortcut, or `"hotkey_types_character"`
+ * when a changed shortcut types a character on the keyboard layout (nothing is saved then).
  */
 export function saveSettings(settings: Settings): Promise<Settings> {
   return invoke<Settings>("save_settings", { settings });
@@ -621,4 +651,50 @@ export function quitApp(): Promise<void> {
 /** Calls `handler` the first time the window is closed, to explain that the app keeps running in the tray. */
 export function onCloseToTrayNotice(handler: () => void): Promise<UnlistenFn> {
   return listen<null>("close-to-tray-notice", () => handler());
+}
+
+/** Why a shortcut that is set does not work. Mirrors `ProblemReason` in `src-tauri/src/hotkeys/mod.rs`. */
+export type HotkeyProblemReason = "unavailable" | "typesCharacter";
+
+/** A shortcut that is set but not registered. */
+export interface HotkeyProblem {
+  action: HotkeyAction;
+  shortcut: string;
+  reason: HotkeyProblemReason;
+}
+
+/** The shortcuts that do not work, and whether they are paused while one is being recorded. */
+export interface HotkeyStatus {
+  problems: HotkeyProblem[];
+  suspended: boolean;
+}
+
+/** Which shortcuts are set but not working (Windows refused them, or they type a character). */
+export function getHotkeyStatus(): Promise<HotkeyStatus> {
+  return invoke<HotkeyStatus>("get_hotkey_status");
+}
+
+/**
+ * Turns every shortcut off while a new one is being recorded (so the combination reaches the
+ * panel instead of firing), and back on.
+ */
+export function setHotkeysSuspended(suspended: boolean): Promise<void> {
+  return invoke<void>("set_hotkeys_suspended", { suspended });
+}
+
+/**
+ * Checks a recorded shortcut with the core. Rejects with `"hotkey_types_character"` when it types a
+ * character on the keyboard layout (AltGr), or `"invalid_settings"` when it is not valid.
+ */
+export function checkHotkey(shortcut: string): Promise<void> {
+  return invoke<void>("check_hotkey", { shortcut });
+}
+
+/** Calls `handler` when the push-to-talk key goes down (`true`) or up (`false`). */
+export function onPushToTalk(
+  handler: (held: boolean) => void,
+): Promise<UnlistenFn> {
+  return listen<{ held: boolean }>("push-to-talk", (event) =>
+    handler(event.payload.held),
+  );
 }

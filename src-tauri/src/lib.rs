@@ -4,6 +4,7 @@ pub mod audio;
 pub mod commands;
 pub mod credentials;
 pub mod error;
+pub mod hotkeys;
 pub mod logging;
 pub mod persist;
 pub mod pipeline;
@@ -20,6 +21,12 @@ use tauri::Manager;
 pub fn run() {
     let result = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        // Global shortcuts (RegisterHotKey: no hooks, nothing injected); see `hotkeys`.
+        .plugin(
+            tauri_plugin_global_shortcut::Builder::new()
+                .with_handler(hotkeys::on_shortcut)
+                .build(),
+        )
         .setup(|app| {
             let log_dir = app.path().app_log_dir()?;
             let log_guard = logging::init(&log_dir)?;
@@ -35,7 +42,8 @@ pub fn run() {
             let settings_path = config_dir.join(settings::SETTINGS_FILE_NAME);
             let store = settings::SettingsStore::load(settings_path);
             tracing::info!(path = %store.path().display(), "settings loaded");
-            let cap = store.get()?.spending_cap;
+            let loaded = store.get()?;
+            let cap = loaded.spending_cap;
             app.manage(store);
 
             // Usage history: written every FLUSH_INTERVAL while it changes (and when a session
@@ -81,6 +89,10 @@ pub fn run() {
                 tracing::warn!(%error, "could not create the tray icon; closing the window quits");
             }
 
+            // Global shortcuts: what Windows refuses is reported in Settings.
+            app.manage(hotkeys::Hotkeys::default());
+            hotkeys::register_at_startup(app.handle(), &loaded);
+
             // Ctrl+C in the console (`tauri dev`) closes the app like its window does, so the
             // translations shut down cleanly instead of the process being killed.
             let handle = app.handle().clone();
@@ -122,6 +134,9 @@ pub fn run() {
             commands::set_tray_labels,
             commands::hide_to_tray,
             commands::complete_onboarding,
+            commands::get_hotkey_status,
+            commands::set_hotkeys_suspended,
+            commands::check_hotkey,
             commands::quit_app
         ])
         .build(tauri::generate_context!());

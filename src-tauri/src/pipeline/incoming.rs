@@ -27,6 +27,7 @@ pub fn config(settings: &IncomingSettings, voice: &VoiceActivitySettings) -> Pip
         original_volume: Some(settings.original_volume),
         reconnect: ReconnectPolicy::default(),
         voice: VoiceConfig::from_settings(voice),
+        talk_key: None,
     }
 }
 
@@ -116,6 +117,7 @@ mod tests {
                 original_volume: Some(35),
                 reconnect: ReconnectPolicy::default(),
                 voice: VoiceConfig::default(),
+                talk_key: None,
             }
         );
     }

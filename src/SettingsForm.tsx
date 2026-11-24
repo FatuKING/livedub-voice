@@ -1,23 +1,35 @@
-import { LogOut, RefreshCw, Save } from "lucide-react";
+import { LogOut, RefreshCw, RotateCcw, Save } from "lucide-react";
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import Button from "./components/Button";
 import Card from "./components/Card";
 import LanguageRoute from "./components/LanguageRoute";
 import Notice from "./components/Notice";
 import Perforation from "./components/Perforation";
+import SegmentedControl from "./components/SegmentedControl";
 import Select from "./components/Select";
+import ShortcutField from "./components/ShortcutField";
 import Slider from "./components/Slider";
 import Toggle from "./components/Toggle";
 import { useI18n } from "./i18n/context";
 import { failureText, type Failure } from "./i18n/errors";
 import {
+  getHotkeyStatus,
   getSettings,
   listAudioDevices,
   quitApp,
   saveSettings,
   type AudioDevice,
+  type HotkeyAction,
+  type HotkeyProblem,
   type Settings,
+  type TalkMode,
 } from "./lib/api";
+import {
+  bindingOf,
+  conflictOf,
+  defaultBindings,
+  formatShortcut,
+} from "./lib/hotkeys";
 import MicTest from "./MicTest";
 import SourceAppPicker from "./SourceAppPicker";
 import {
@@ -36,9 +48,24 @@ const AUTO_OFF_CHOICES = [1, 2, 5, 10, 15, 30, 60];
 /** The auto-off select's value for "never". */
 const NEVER = "never";
 
+/** The shortcuts listed in the Keyboard shortcuts card (push-to-talk is in the outgoing card). */
+const TOGGLE_ACTIONS: readonly HotkeyAction[] = [
+  "toggleIncoming",
+  "toggleOutgoing",
+  "toggleBoth",
+];
+
+/** Color of each toggle's recorder. */
+const ACTION_DIRECTION: Partial<Record<HotkeyAction, Direction>> = {
+  toggleIncoming: "incoming",
+  toggleOutgoing: "outgoing",
+  pushToTalk: "outgoing",
+};
+
 /**
  * Settings form: languages, ducking, enabled toggles, devices and source app, grouped per
- * direction; then voice detection and what closing the window does, for the whole app.
+ * direction (with push-to-talk for outgoing); then voice detection, keyboard shortcuts and what
+ * closing the window does, for the whole app.
  *
  * Devices are picked from the list the core reports (refreshable); the incoming source is the
  * whole system or one of the apps playing audio (see `SourceAppPicker`).
@@ -57,6 +84,20 @@ function SettingsForm() {
     incoming: false,
     outgoing: false,
   });
+  const [hotkeyProblems, setHotkeyProblems] = useState<HotkeyProblem[]>([]);
+
+  const fetchHotkeyStatus = useCallback(
+    () =>
+      getHotkeyStatus().then(
+        (status) => setHotkeyProblems(status.problems),
+        () => undefined,
+      ),
+    [],
+  );
+
+  useEffect(() => {
+    void fetchHotkeyStatus();
+  }, [fetchHotkeyStatus]);
 
   const fetchDevices = useCallback(
     () =>
@@ -117,7 +158,7 @@ function SettingsForm() {
     );
   }
 
-  const { incoming, outgoing, voiceActivity } = settings;
+  const { incoming, outgoing, voiceActivity, hotkeys } = settings;
 
   function updateIncoming(patch: Partial<Settings["incoming"]>) {
     setSaved(false);
@@ -147,6 +188,47 @@ function SettingsForm() {
           }
         : current,
     );
+  }
+
+  function updateHotkeys(patch: Partial<Settings["hotkeys"]>) {
+    setSaved(false);
+    setSettings((current) =>
+      current
+        ? { ...current, hotkeys: { ...current.hotkeys, ...patch } }
+        : current,
+    );
+  }
+
+  function setBinding(action: HotkeyAction, value: string | null) {
+    updateHotkeys({ bindings: { ...hotkeys.bindings, [action]: value } });
+  }
+
+  function resetBindings() {
+    updateHotkeys({ bindings: defaultBindings() });
+  }
+
+  /** "Already used by …" when another action has `value`. */
+  function conflictMessage(action: HotkeyAction, value: string): string | null {
+    const other = conflictOf(hotkeys, action, value);
+    return other
+      ? t("settings.hotkeys.problems.conflict", {
+          shortcut: formatShortcut(value),
+          action: t(`settings.hotkeys.actions.${other}`),
+        })
+      : null;
+  }
+
+  /** Why the saved shortcut of `action` does not work, if the core says so. */
+  function problemMessage(action: HotkeyAction): string | null {
+    const value = bindingOf(hotkeys, action);
+    const problem = hotkeyProblems.find(
+      (item) => item.action === action && item.shortcut === value,
+    );
+    return problem
+      ? t(`settings.hotkeys.problems.${problem.reason}`, {
+          shortcut: formatShortcut(problem.shortcut),
+        })
+      : null;
   }
 
   function updateCloseQuitsApp(closeQuitsApp: boolean) {
@@ -191,10 +273,21 @@ function SettingsForm() {
       setError({ key: "settings.saveError", reason });
     } finally {
       setSaving(false);
+      // The shortcuts were registered again: show what Windows refused.
+      void fetchHotkeyStatus();
     }
   }
 
   const missingCable = devices !== null && !hasVirtualCable(devices, "output");
+  const talkModeOptions: { value: TalkMode; label: string }[] = [
+    {
+      value: "voiceDetection",
+      label: t("settings.outgoing.talkModes.voiceDetection"),
+    },
+    { value: "pushToTalk", label: t("settings.outgoing.talkModes.pushToTalk") },
+  ];
+  const pushToTalk = outgoing.talkMode === "pushToTalk";
+  const pushToTalkKey = bindingOf(hotkeys, "pushToTalk");
 
   return (
     <form
@@ -322,6 +415,33 @@ function SettingsForm() {
               updateOutgoing({ outputDeviceId: deviceIdFromValue(value) })
             }
           />
+          <SegmentedControl
+            direction="outgoing"
+            label={t("settings.outgoing.talkMode")}
+            hint={
+              pushToTalk
+                ? t("settings.outgoing.talkModeHints.pushToTalk")
+                : t("settings.outgoing.talkModeHints.voiceDetection")
+            }
+            value={outgoing.talkMode}
+            options={talkModeOptions}
+            onChange={(talkMode) => updateOutgoing({ talkMode })}
+          />
+          {pushToTalk && (
+            <ShortcutField
+              direction="outgoing"
+              label={t("settings.hotkeys.actions.pushToTalk")}
+              hint={t("settings.outgoing.pushToTalkKeyHint")}
+              value={pushToTalkKey}
+              onChange={(value) => setBinding("pushToTalk", value)}
+              validate={(value) => conflictMessage("pushToTalk", value)}
+              problem={
+                pushToTalkKey === null
+                  ? t("settings.outgoing.pushToTalkKeyMissing")
+                  : problemMessage("pushToTalk")
+              }
+            />
+          )}
           <Perforation />
           <MicTest
             inputId={outgoing.inputDeviceId}
@@ -358,6 +478,44 @@ function SettingsForm() {
           />
         </Card>
 
+        <Card
+          eyebrow={t("settings.hotkeys.eyebrow")}
+          title={t("settings.hotkeys.title")}
+          aria-label={t("settings.hotkeys.ariaLabel")}
+        >
+          <p className="ld-settings__hint">{t("settings.hotkeys.intro")}</p>
+          {TOGGLE_ACTIONS.map((action) => (
+            <ShortcutField
+              key={action}
+              direction={ACTION_DIRECTION[action]}
+              label={t(`settings.hotkeys.actions.${action}`)}
+              value={bindingOf(hotkeys, action)}
+              onChange={(value) => setBinding(action, value)}
+              validate={(value) => conflictMessage(action, value)}
+              problem={problemMessage(action)}
+            />
+          ))}
+          <p className="ld-settings__hint">{t("settings.hotkeys.keysHint")}</p>
+          <div>
+            <Button
+              variant="secondary"
+              icon={<RotateCcw size={16} aria-hidden="true" />}
+              onClick={resetBindings}
+            >
+              {t("settings.hotkeys.resetDefaults")}
+            </Button>
+          </div>
+          <Perforation />
+          <Toggle
+            label={t("settings.hotkeys.soundCues")}
+            hint={t("settings.hotkeys.soundCuesHint")}
+            checked={hotkeys.soundCues}
+            onChange={(soundCues) => updateHotkeys({ soundCues })}
+          />
+        </Card>
+      </div>
+
+      <div className="ld-route-grid">
         <Card
           eyebrow={t("settings.window.eyebrow")}
           title={t("settings.window.title")}

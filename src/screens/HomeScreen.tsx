@@ -18,6 +18,7 @@ import {
   type Language,
   type Settings,
 } from "../lib/api";
+import { bindingOf, formatShortcut } from "../lib/hotkeys";
 import { languageName, type Direction } from "../lib/languages";
 import QuickGuide from "../QuickGuide";
 import TranslationControls from "../TranslationControls";
@@ -181,6 +182,24 @@ function HomeScreen({ onOpenSettings, onOpenUsage }: HomeScreenProps) {
   const originalVolume =
     settings?.incoming.originalVolume ?? DEFAULT_ORIGINAL_VOLUME;
 
+  /** The toggle shortcut of `direction`, as a detail row (none when unset). */
+  function shortcutDetail(direction: Direction) {
+    const value = settings
+      ? bindingOf(
+          settings.hotkeys,
+          direction === "incoming" ? "toggleIncoming" : "toggleOutgoing",
+        )
+      : null;
+    return value
+      ? [{ label: t("home.shortcut"), value: formatShortcut(value) }]
+      : [];
+  }
+
+  const pushToTalkBinding =
+    settings?.outgoing.talkMode === "pushToTalk"
+      ? bindingOf(settings.hotkeys, "pushToTalk")
+      : null;
+
   return (
     <>
       <PageHeader
@@ -233,6 +252,7 @@ function HomeScreen({ onOpenSettings, onOpenUsage }: HomeScreenProps) {
                 ? deviceName(settings.incoming.outputDeviceId)
                 : t("home.defaultDevice"),
             },
+            ...shortcutDetail("incoming"),
           ]}
         >
           <TranslationControls
@@ -263,6 +283,7 @@ function HomeScreen({ onOpenSettings, onOpenUsage }: HomeScreenProps) {
                 ? deviceName(outgoingOutputId)
                 : t("home.notSet"),
             },
+            ...shortcutDetail("outgoing"),
           ]}
         >
           <TranslationControls
@@ -278,6 +299,9 @@ function HomeScreen({ onOpenSettings, onOpenUsage }: HomeScreenProps) {
             help={t("home.outgoing.help")}
             onOpenSettings={onOpenSettings}
             onOpenUsage={onOpenUsage}
+            pushToTalkKey={
+              pushToTalkBinding ? formatShortcut(pushToTalkBinding) : undefined
+            }
           />
         </RouteCard>
       </div>
