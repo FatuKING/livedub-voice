@@ -413,6 +413,7 @@ pub(crate) fn outgoing_config() -> PipelineConfig {
         original_volume: None,
         reconnect: quick_reconnect(3),
         voice: VoiceConfig::default(),
+        talk_key: None,
     }
 }
 
@@ -426,6 +427,7 @@ pub(crate) fn incoming_config_from(source: SourceApp) -> PipelineConfig {
         original_volume: Some(20),
         reconnect: quick_reconnect(3),
         voice: VoiceConfig::default(),
+        talk_key: None,
     }
 }
 

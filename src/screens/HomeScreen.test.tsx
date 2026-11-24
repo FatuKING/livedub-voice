@@ -1,7 +1,14 @@
 import { act, fireEvent, screen } from "@testing-library/react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { AudioDevice, Settings, UsageSnapshot } from "../lib/api";
+import type {
+  AudioDevice,
+  PipelineState,
+  Settings,
+  TalkMode,
+  UsageSnapshot,
+} from "../lib/api";
 import { render } from "../test/i18n";
 import HomeScreen from "./HomeScreen";
 
@@ -44,6 +51,8 @@ interface Setup {
   devices?: AudioDevice[];
   /** The usage snapshot; pending when omitted. */
   usage?: UsageSnapshot;
+  talkMode?: TalkMode;
+  outgoingState?: PipelineState;
 }
 
 function setup({
@@ -53,9 +62,11 @@ function setup({
   headphonesId = null,
   devices = [MIC, CABLE, SPEAKERS],
   usage,
+  talkMode = "voiceDetection",
+  outgoingState = "idle",
 }: Setup = {}) {
   const settings: Settings = {
-    version: 5,
+    version: 6,
     uiLanguage: "en",
     incoming: {
       enabled: false,
@@ -69,9 +80,11 @@ function setup({
       targetLanguage: "en",
       inputDeviceId: "mic",
       outputDeviceId,
+      talkMode,
     },
     spendingCap: { dailyUsd: null, monthlyUsd: null },
     voiceActivity: { pauseWhenSilent: true, autoOffMinutes: 5 },
+    hotkeys: { bindings: {}, soundCues: true },
     closeQuitsApp: false,
     trayNoticeShown: false,
     onboardingCompleted: true,
@@ -86,7 +99,7 @@ function setup({
       fakeTranslator,
     },
     list_audio_devices: devices,
-    get_outgoing_status: { state: "idle", error: null },
+    get_outgoing_status: { state: outgoingState, error: null },
     get_incoming_status: { state: "idle", error: null },
   };
   if (usage) answers.get_usage = usage;
@@ -268,6 +281,58 @@ describe("HomeScreen spending cap", () => {
     expect(onOpenUsage).toHaveBeenCalled();
     expect(
       screen.getByRole("button", { name: "Keep going today" }),
+    ).toBeInTheDocument();
+  });
+});
+
+describe("HomeScreen push-to-talk", () => {
+  /** Captures the panel's event handlers so a test can send core events. */
+  function captureEvents() {
+    const handlers: Record<string, (event: { payload: unknown }) => void> = {};
+    vi.mocked(listen).mockImplementation((name, handler) => {
+      handlers[name] = handler as (event: { payload: unknown }) => void;
+      return Promise.resolve(() => {});
+    });
+    return (name: string, payload: unknown) => {
+      act(() => handlers[name]?.({ payload }));
+    };
+  }
+
+  it("shows the toggle shortcuts with voice detection, and no key hint", async () => {
+    setup();
+    await loaded();
+
+    expect(screen.getByText("Ctrl + Alt + I")).toBeInTheDocument();
+    expect(screen.getByText("Ctrl + Alt + O")).toBeInTheDocument();
+    expect(screen.queryByText(/to talk/)).not.toBeInTheDocument();
+  });
+
+  it("says which key to hold, and turns coral while it is held", async () => {
+    const send = captureEvents();
+    setup({ talkMode: "pushToTalk", outgoingState: "live" });
+    await loaded();
+
+    const hint = screen.getByText("Hold F8 to talk");
+    expect(hint.parentElement).not.toHaveClass("ld-translation__ptt--talking");
+
+    send("push-to-talk", { held: true });
+    const talking = screen.getByText("Talking: others hear you");
+    expect(talking.parentElement).toHaveClass("ld-translation__ptt--talking");
+
+    send("push-to-talk", { held: false });
+    expect(screen.getByText("Hold F8 to talk")).toBeInTheDocument();
+  });
+
+  it("asks to start outgoing first when the key is held while it is off", async () => {
+    const send = captureEvents();
+    setup({ talkMode: "pushToTalk" });
+    await loaded();
+
+    send("push-to-talk", { held: true });
+
+    expect(screen.getByText("Hold F8 to talk")).toBeInTheDocument();
+    expect(
+      screen.getByText("Start the outgoing translation to talk with F8."),
     ).toBeInTheDocument();
   });
 });

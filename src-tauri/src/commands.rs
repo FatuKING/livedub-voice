@@ -14,6 +14,7 @@ use crate::audio::{self, AudioApp, AudioDevice, InputLevel, Monitor, MonitorEven
 use crate::credentials::validation::{KeyValidation, KeyValidator};
 use crate::credentials::{ApiKeyStatus, Credentials};
 use crate::error::{AppError, AppResult};
+use crate::hotkeys::{self, Apply, HotkeyStatus, Hotkeys, PluginRegistrar};
 use crate::pipeline::voice::VoiceActivity;
 use crate::pipeline::{
     Direction, EventSink, PipelineEvent, PipelineManager, PipelineStatus, StartPlan, WasapiIo,
@@ -71,19 +72,36 @@ pub fn get_settings(store: State<'_, SettingsStore>) -> AppResult<Settings> {
 /// Validates and saves the settings, returning what was saved. `trayNoticeShown` and
 /// `onboardingCompleted` keep the core's value (see [`SettingsStore::save_from_panel`]).
 ///
-/// A running incoming translation applies the new original-audio volume at once, and the
-/// spending cap applies at once (a `usage-updated` event follows); every other change applies
-/// the next time its direction starts (see [`crate::pipeline::manager`]). `closeQuitsApp`
-/// applies to the next close.
+/// A running incoming translation applies the new original-audio volume at once, the spending
+/// cap applies at once (a `usage-updated` event follows), and the keyboard shortcuts are
+/// registered again at once; every other change applies the next time its direction starts (see
+/// [`crate::pipeline::manager`]). `closeQuitsApp` applies to the next close.
+///
+/// A shortcut the user changed that Windows refuses (`hotkey_unavailable`) or that types a
+/// character on the keyboard layout (`hotkey_types_character`) fails the save: nothing is saved
+/// and the previous shortcuts stay registered.
 #[tauri::command]
 pub fn save_settings(
     app: AppHandle,
     store: State<'_, SettingsStore>,
     pipelines: State<'_, PipelineManager>,
     meter: State<'_, Arc<UsageMeter>>,
+    hotkeys: State<'_, Hotkeys>,
     settings: Settings,
 ) -> AppResult<Settings> {
-    let saved = store.save_from_panel(settings)?;
+    settings.validate()?;
+    let registrar = PluginRegistrar(&app);
+    hotkeys.apply(&registrar, hotkeys::plan(&settings), Apply::Strict)?;
+    let saved = match store.save_from_panel(settings) {
+        Ok(saved) => saved,
+        Err(error) => {
+            // Back to the shortcuts of the settings still in force.
+            if let Ok(current) = store.get() {
+                let _ = hotkeys.apply(&registrar, hotkeys::plan(&current), Apply::Lenient);
+            }
+            return Err(error);
+        }
+    };
     pipelines.set_original_volume(saved.incoming.original_volume);
     meter.set_cap(saved.spending_cap);
     emit_usage(&app, &meter);
@@ -450,7 +468,11 @@ pub async fn start_translation(app: &AppHandle, direction: Direction) -> AppResu
                     tracing::warn!("the outgoing output is not a known virtual cable");
                 }
                 StartPlan {
-                    config: outgoing::config(&settings.outgoing, &settings.voice_activity),
+                    config: outgoing::config(
+                        &settings.outgoing,
+                        &settings.voice_activity,
+                        app.state::<Hotkeys>().talk_key(),
+                    ),
                     translator,
                     io: Arc::new(WasapiIo::default()),
                 }
@@ -506,6 +528,32 @@ pub fn hide_to_tray(app: AppHandle, store: State<'_, SettingsStore>) -> AppResul
 #[tauri::command]
 pub fn complete_onboarding(store: State<'_, SettingsStore>) -> AppResult<Settings> {
     store.update(|settings| settings.onboarding_completed = true)
+}
+
+/// The keyboard shortcuts that are set but not working (Windows refused them, or they type a
+/// character on the keyboard layout), and whether they are suspended.
+#[tauri::command]
+pub fn get_hotkey_status(hotkeys: State<'_, Hotkeys>) -> HotkeyStatus {
+    hotkeys.status()
+}
+
+/// Turns every keyboard shortcut off while the panel records a new one (so the combination
+/// reaches the panel instead of firing), and back on.
+#[tauri::command]
+pub fn set_hotkeys_suspended(app: AppHandle, hotkeys: State<'_, Hotkeys>, suspended: bool) {
+    hotkeys.set_suspended(&PluginRegistrar(&app), suspended);
+}
+
+/// Checks a shortcut the panel recorded: fails with `invalid_settings` when it is not a valid
+/// shortcut, or `hotkey_types_character` when it types a character on the keyboard layout.
+#[tauri::command]
+pub fn check_hotkey(shortcut: String) -> AppResult<()> {
+    let hotkey = hotkeys::Hotkey::parse(&shortcut)
+        .map_err(|error| AppError::InvalidSettings(error.to_string()))?;
+    if hotkeys::layout::types_character(&hotkey) {
+        return Err(AppError::HotkeyTypesCharacter(hotkey.to_string()));
+    }
+    Ok(())
 }
 
 /// Quits LiveDub Voice: both translations stop (gracefully, see [`shut_down_pipelines`]) and

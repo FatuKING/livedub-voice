@@ -31,7 +31,7 @@ const NO_CAP: CapStatus = {
 };
 
 const SETTINGS: Settings = {
-  version: 5,
+  version: 6,
   uiLanguage: "en",
   incoming: {
     enabled: false,
@@ -45,9 +45,11 @@ const SETTINGS: Settings = {
     targetLanguage: "en",
     inputDeviceId: null,
     outputDeviceId: "cable",
+    talkMode: "voiceDetection",
   },
   spendingCap: { dailyUsd: 2, monthlyUsd: null },
   voiceActivity: { pauseWhenSilent: true, autoOffMinutes: 5 },
+  hotkeys: { bindings: {}, soundCues: true },
   closeQuitsApp: false,
   trayNoticeShown: false,
   onboardingCompleted: true,
@@ -279,6 +281,7 @@ describe("SpendingCapCard", () => {
         ...SETTINGS,
         spendingCap: { dailyUsd: null, monthlyUsd: 0.01 },
         voiceActivity: { pauseWhenSilent: true, autoOffMinutes: 5 },
+        hotkeys: { bindings: {}, soundCues: true },
         closeQuitsApp: false,
         trayNoticeShown: false,
         onboardingCompleted: true,

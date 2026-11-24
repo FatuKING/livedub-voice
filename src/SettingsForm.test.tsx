@@ -1,8 +1,8 @@
-import { fireEvent, screen } from "@testing-library/react";
+import { act, fireEvent, screen } from "@testing-library/react";
 import { invoke } from "@tauri-apps/api/core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import SettingsForm from "./SettingsForm";
-import type { AudioApp, AudioDevice, Settings } from "./lib/api";
+import type { AudioApp, AudioDevice, HotkeyProblem, Settings } from "./lib/api";
 import { render } from "./test/i18n";
 
 vi.mock("@tauri-apps/api/core", () => ({
@@ -12,7 +12,7 @@ vi.mock("@tauri-apps/api/core", () => ({
 const invokeMock = vi.mocked(invoke);
 
 const defaults: Settings = {
-  version: 5,
+  version: 6,
   uiLanguage: "system",
   incoming: {
     enabled: false,
@@ -26,9 +26,11 @@ const defaults: Settings = {
     targetLanguage: "en",
     inputDeviceId: null,
     outputDeviceId: null,
+    talkMode: "voiceDetection",
   },
   spendingCap: { dailyUsd: null, monthlyUsd: null },
   voiceActivity: { pauseWhenSilent: true, autoOffMinutes: 5 },
+  hotkeys: { bindings: {}, soundCues: true },
   closeQuitsApp: false,
   trayNoticeShown: false,
   onboardingCompleted: true,
@@ -80,6 +82,7 @@ function mockCore(
   devices: AudioDevice[],
   apps: AudioApp[] = [chrome, discord],
   states: { incoming?: string; outgoing?: string } = {},
+  hotkeyProblems: HotkeyProblem[] = [],
 ) {
   invokeMock.mockImplementation((command, args) => {
     switch (command) {
@@ -99,6 +102,8 @@ function mockCore(
         return Promise.resolve(devices);
       case "list_audio_apps":
         return Promise.resolve(apps);
+      case "get_hotkey_status":
+        return Promise.resolve({ problems: hotkeyProblems, suspended: false });
       default:
         return Promise.resolve(
           (args as { settings?: Settings } | undefined)?.settings,
@@ -207,7 +212,7 @@ describe("SettingsForm", () => {
     );
     expect(invokeMock).toHaveBeenCalledWith("save_settings", {
       settings: {
-        version: 5,
+        version: 6,
         // The form saves the language the panel is showing (English here).
         uiLanguage: "en",
         incoming: {
@@ -222,9 +227,11 @@ describe("SettingsForm", () => {
           targetLanguage: "es",
           inputDeviceId: null,
           outputDeviceId: "cable-input",
+          talkMode: "voiceDetection",
         },
         spendingCap: { dailyUsd: null, monthlyUsd: null },
         voiceActivity: { pauseWhenSilent: true, autoOffMinutes: 5 },
+        hotkeys: { bindings: {}, soundCues: true },
         closeQuitsApp: false,
         trayNoticeShown: false,
         onboardingCompleted: true,
@@ -438,6 +445,163 @@ describe("SettingsForm", () => {
     const autoOff = await screen.findByLabelText("Turn off when nobody speaks");
     expect(autoOff).toHaveValue("7");
     expect(optionLabels(autoOff)).toContain("After 7 minutes");
+  });
+
+  it("switches outgoing to push-to-talk with its key and saves it", async () => {
+    mockCore(defaults, [speakers]);
+    render(<SettingsForm />);
+
+    const pushToTalk = await screen.findByRole("radio", {
+      name: "Push-to-talk",
+    });
+    expect(screen.getByRole("radio", { name: "When you speak" })).toBeChecked();
+    expect(
+      screen.queryByRole("button", { name: "Push-to-talk key" }),
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(pushToTalk);
+
+    const key = screen.getByRole("button", { name: "Push-to-talk key" });
+    expect(key).toHaveTextContent("F8");
+    expect(screen.getByText(/Only while you hold the key/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await screen.findByText("Settings saved.");
+    expect(savedSettings().outgoing.talkMode).toBe("pushToTalk");
+  });
+
+  it("asks for a key when push-to-talk has none", async () => {
+    mockCore(
+      {
+        ...defaults,
+        outgoing: { ...defaults.outgoing, talkMode: "pushToTalk" },
+        hotkeys: { bindings: { pushToTalk: null }, soundCues: true },
+      },
+      [speakers],
+    );
+    render(<SettingsForm />);
+
+    expect(
+      await screen.findByText("Choose a key to use push-to-talk."),
+    ).toBeInTheDocument();
+  });
+
+  it("records, clears and resets the toggle shortcuts", async () => {
+    mockCore(defaults, [speakers]);
+    render(<SettingsForm />);
+
+    const both = await screen.findByRole("button", {
+      name: "Turn both on or off",
+    });
+    expect(both).toHaveTextContent("Ctrl + Alt + B");
+
+    // Another action's shortcut is refused.
+    fireEvent.click(both);
+    fireEvent.keyDown(both, {
+      code: "KeyI",
+      key: "i",
+      ctrlKey: true,
+      altKey: true,
+    });
+    await act(async () => {});
+    expect(
+      screen.getByText(
+        "Ctrl + Alt + I is already used for “Turn incoming on or off”.",
+      ),
+    ).toBeInTheDocument();
+    expect(both).toHaveTextContent("Ctrl + Alt + B");
+
+    // A free one is taken.
+    fireEvent.click(both);
+    fireEvent.keyDown(both, { code: "F10", key: "F10" });
+    await act(async () => {});
+    expect(both).toHaveTextContent("F10");
+
+    // Clearing the incoming one.
+    const incoming = screen.getByRole("button", {
+      name: "Turn incoming on or off",
+    });
+    const clear = incoming.parentElement?.querySelector(
+      "button[aria-label='Clear the shortcut']",
+    );
+    fireEvent.click(clear as Element);
+    expect(incoming).toHaveTextContent("None");
+
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await screen.findByText("Settings saved.");
+    expect(savedSettings().hotkeys.bindings).toMatchObject({
+      toggleIncoming: null,
+      toggleBoth: "F10",
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Reset to defaults" }));
+    expect(incoming).toHaveTextContent("Ctrl + Alt + I");
+    expect(both).toHaveTextContent("Ctrl + Alt + B");
+  });
+
+  it("says which shortcuts Windows refused", async () => {
+    mockCore(defaults, [speakers], [chrome], {}, [
+      {
+        action: "toggleOutgoing",
+        shortcut: "Ctrl+Alt+KeyO",
+        reason: "typesCharacter",
+      },
+      {
+        action: "toggleBoth",
+        shortcut: "Ctrl+Alt+KeyB",
+        reason: "unavailable",
+      },
+    ]);
+    render(<SettingsForm />);
+
+    expect(
+      await screen.findByText(
+        "Ctrl + Alt + O types a character on your keyboard layout (AltGr), so it is not used. Choose another one.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Ctrl + Alt + B is not working: another app is using it, or Windows reserves it. Choose another one.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("explains a save refused because Windows refused a shortcut", async () => {
+    mockCore(defaults, [speakers]);
+    const core = invokeMock.getMockImplementation();
+    invokeMock.mockImplementation((command, args) =>
+      command === "save_settings"
+        ? // Tauri rejects failing commands with a plain `{ code, message }` object.
+          // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors
+          Promise.reject({
+            code: "hotkey_unavailable",
+            message:
+              "shortcut not available (another app may be using it): Ctrl+Alt+KeyB",
+          })
+        : (core?.(command, args) as Promise<unknown>),
+    );
+    render(<SettingsForm />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Save" }));
+
+    expect(
+      await screen.findByText(
+        "Could not save settings: Windows refused the shortcut Ctrl + Alt + B: another app may be using it. Choose another one.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("turns the sound cues off", async () => {
+    mockCore(defaults, [speakers]);
+    render(<SettingsForm />);
+
+    const cues = await screen.findByRole("switch", { name: "Sound cues" });
+    expect(cues).toBeChecked();
+    fireEvent.click(cues);
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await screen.findByText("Settings saved.");
+    expect(savedSettings().hotkeys.soundCues).toBe(false);
   });
 
   it("quits the app from Settings", async () => {

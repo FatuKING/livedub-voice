@@ -1,4 +1,5 @@
 import { isAppError } from "../lib/api";
+import { formatShortcut } from "../lib/hotkeys";
 import { en } from "./en";
 import { errorDetail, type Translate } from "./translate";
 import type { MessageKey } from "./types";
@@ -21,7 +22,11 @@ export function translateError(reason: unknown, t: Translate): string {
   }
   if (!isKnownCode(reason.code)) return reason.message;
   const key: MessageKey = `errors.${reason.code}`;
-  return t(key, { detail: errorDetail(reason.message) });
+  const detail = errorDetail(reason.message);
+  // Shortcut errors hold the shortcut ("Ctrl+Alt+KeyI"): show it as the user reads it.
+  return t(key, {
+    detail: reason.code.startsWith("hotkey_") ? formatShortcut(detail) : detail,
+  });
 }
 
 /** A failed action: the message to show (with an `{error}` placeholder) and why it failed. */

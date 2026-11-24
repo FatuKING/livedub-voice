@@ -26,7 +26,7 @@ const openUrlMock = vi.mocked(openUrl);
 const FAKE_KEY = "sk-test-0000000000000000000000abcd";
 
 const SETTINGS: Settings = {
-  version: 5,
+  version: 6,
   uiLanguage: "en",
   incoming: {
     enabled: false,
@@ -40,9 +40,11 @@ const SETTINGS: Settings = {
     targetLanguage: "en",
     inputDeviceId: null,
     outputDeviceId: null,
+    talkMode: "voiceDetection",
   },
   spendingCap: { dailyUsd: null, monthlyUsd: null },
   voiceActivity: { pauseWhenSilent: true, autoOffMinutes: 5 },
+  hotkeys: { bindings: {}, soundCues: true },
   closeQuitsApp: false,
   trayNoticeShown: false,
   onboardingCompleted: false,

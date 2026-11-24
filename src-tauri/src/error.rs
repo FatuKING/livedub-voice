@@ -75,6 +75,16 @@ pub enum AppError {
         limit_usd: f64,
     },
 
+    /// Windows refused a keyboard shortcut (another app registered it, or Windows reserves
+    /// it). Holds the shortcut.
+    #[error("shortcut not available (another app may be using it): {0}")]
+    HotkeyUnavailable(String),
+
+    /// A keyboard shortcut types a character on the keyboard layout (`AltGr` is `Ctrl+Alt`), so
+    /// it cannot be taken. Holds the shortcut.
+    #[error("shortcut types a character on this keyboard layout: {0}")]
+    HotkeyTypesCharacter(String),
+
     /// An unexpected internal failure that the user cannot act on.
     #[error("internal error: {0}")]
     Internal(String),
@@ -96,6 +106,8 @@ impl AppError {
             Self::DeviceMissing(_) => "device_missing",
             Self::SourceAppNotRunning(_) => "source_app_not_running",
             Self::SpendingCapReached { .. } => "spending_cap_reached",
+            Self::HotkeyUnavailable(_) => "hotkey_unavailable",
+            Self::HotkeyTypesCharacter(_) => "hotkey_types_character",
             Self::Internal(_) => "internal",
         }
     }
