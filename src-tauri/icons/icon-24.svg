@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">
+  <!--
+    LiveDub Voice app icon drawn for 24 px (system tray and title bar at 150 %, the taskbar at
+    100 %). Nine bars turn into noise at this size, so it keeps five, hinted to whole pixels:
+    two teal, the sun bar, two coral. Regenerate the icons with `pnpm icons`.
+  -->
+  <rect width="24" height="24" rx="5.5" fill="#12263A"/>
+  <g fill="#2EC4B6">
+    <rect x="2" y="8" width="3" height="8" rx="1.5"/>
+    <rect x="6" y="5" width="3" height="14" rx="1.5"/>
+  </g>
+  <rect x="10" y="2" width="4" height="20" rx="2" fill="#FFC857"/>
+  <g fill="#FF7A59">
+    <rect x="15" y="5" width="3" height="14" rx="1.5"/>
+    <rect x="19" y="8" width="3" height="8" rx="1.5"/>
+  </g>
+</svg>

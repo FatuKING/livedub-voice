@@ -1,7 +1,18 @@
+/** Bar heights from the left, in a 28×28 box (the mark is symmetric). */
+const HEIGHTS = [6, 10, 16, 22, 26, 22, 16, 10, 6];
+
+/** Teal for the others (incoming), sun for the moment of translation, coral for you (outgoing). */
+function barColor(index: number) {
+  if (index < 4) return "var(--color-incoming)";
+  if (index === 4) return "var(--color-sun)";
+  return "var(--color-outgoing)";
+}
+
 /**
- * LiveDub Voice mark, the app icon without its tile (`src-tauri/icons/icon.svg`): two speech
- * bubbles with voice bars, teal (others → you) behind coral (you → others). The bars and the gap
- * between the bubbles are cut out in the surface color, so it follows the theme.
+ * LiveDub Voice mark, the app icon without its tile (`src-tauri/icons/icon.svg`): a two-tone
+ * voice wave, one voice that changes color as it gets translated — teal bars (others → you),
+ * a sun bar in the middle, coral bars (you → others). Drawn on a 28 px grid (2 px bars, 1 px
+ * gaps) so it is crisp at its default size; the colors are theme tokens, so it follows the theme.
  * Decorative; the app name next to it carries the meaning.
  */
 function LogoMark({ size = 28 }: { size?: number }) {
@@ -9,34 +20,21 @@ function LogoMark({ size = 28 }: { size?: number }) {
     <svg
       width={size}
       height={size}
-      viewBox="112 124 800 800"
-      fill="none"
+      viewBox="0 0 28 28"
       aria-hidden="true"
       focusable="false"
     >
-      <path
-        d="M256 136H528A104 104 0 0 1 632 240V432A104 104 0 0 1 528 536H368L232 656L256 536A104 104 0 0 1 152 432V240A104 104 0 0 1 256 136Z"
-        fill="var(--color-incoming)"
-      />
-      <path
-        d="M312 220V284M392 180V324M472 212V292"
-        stroke="var(--color-surface)"
-        strokeWidth="48"
-        strokeLinecap="round"
-      />
-      <path
-        d="M496 392H768A104 104 0 0 1 872 496V688A104 104 0 0 1 768 792L792 912L656 792H496A104 104 0 0 1 392 688V496A104 104 0 0 1 496 392Z"
-        fill="var(--color-outgoing)"
-        stroke="var(--color-surface)"
-        strokeWidth="40"
-        paintOrder="stroke"
-      />
-      <path
-        d="M552 552V632M632 500V684M712 540V644"
-        stroke="var(--color-surface)"
-        strokeWidth="48"
-        strokeLinecap="round"
-      />
+      {HEIGHTS.map((height, index) => (
+        <rect
+          key={index}
+          x={1 + index * 3}
+          y={14 - height / 2}
+          width={2}
+          height={height}
+          rx={1}
+          fill={barColor(index)}
+        />
+      ))}
     </svg>
   );
 }

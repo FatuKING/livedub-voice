@@ -1,4 +1,9 @@
-# LiveDub Voice
+<h1>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/images/logo-horizontal-dark.svg">
+    <img alt="LiveDub Voice" src="docs/images/logo-horizontal.svg" width="320" height="60">
+  </picture>
+</h1>
 
 [![CI](https://github.com/FatuKING/livedub-voice/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/FatuKING/livedub-voice/actions/workflows/ci.yml)
 
